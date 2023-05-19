@@ -595,12 +595,12 @@ pub fn initiateCircuitSandbox() !void {
             false => if (prev_is_left_mouse_down) try world._mouseButtonUp(.left, mouse_pos),
         }
         switch (is_right_mouse_down) {
-            true => if (!prev_is_right_mouse_down) try world._mouseButtonDown(.left, mouse_pos),
-            false => if (prev_is_right_mouse_down) try world._mouseButtonUp(.left, mouse_pos),
+            true => if (!prev_is_right_mouse_down) try world._mouseButtonDown(.right, mouse_pos),
+            false => if (prev_is_right_mouse_down) try world._mouseButtonUp(.right, mouse_pos),
         }
         switch (is_middle_mouse_down) {
-            true => if (!prev_is_middle_mouse_down) try world._mouseButtonDown(.left, mouse_pos),
-            false => if (prev_is_middle_mouse_down) try world._mouseButtonUp(.left, mouse_pos),
+            true => if (!prev_is_middle_mouse_down) try world._mouseButtonDown(.middle, mouse_pos),
+            false => if (prev_is_middle_mouse_down) try world._mouseButtonUp(.middle, mouse_pos),
         }
 
         if (!mouse_pos.equals(prev_mouse_pos)) {

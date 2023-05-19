@@ -1,7 +1,7 @@
 [ ] zoom around mouse position
-[ ] pan via mouse drag
-[ ] init camera (e.g. implement "look at")
-[ ] object occlusion pre-render pass
-[ ] noise generators
-[ ] resource manager: textures
+[x] pan via mouse drag
+[x] init camera (e.g. implement "look at")
+[/] resource manager: textures
 [ ] resource manager: strings used in render
+[LOWPRI] noise generators
+[LOWPRI] object occlusion pre-render pass

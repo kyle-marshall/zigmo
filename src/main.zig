@@ -21,8 +21,8 @@ const initiateCircuitSandbox = @import("circuits/sandbox.zig").initiateCircuitSa
 pub fn main() !void {
     std.debug.print("It's a busy day ahead!\n", .{});
     // try geo.doRadiusQueryBenchmark();
-    try bunnyTest();
-    // try initiateCircuitSandbox();
+    // try bunnyTest();
+    try initiateCircuitSandbox();
 }
 
 test "simple test" {
