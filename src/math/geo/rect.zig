@@ -1,5 +1,5 @@
 const std = @import("std");
-const math = @import("root").math;
+const math = @import("../math.zig");
 const Vec2 = math.Vec2;
 
 pub fn Rect(comptime NumT: type) type {

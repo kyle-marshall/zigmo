@@ -10,14 +10,17 @@ pub const rlgl = @cImport(@cInclude("rlgl.h"));
 const Color = raylib.Color;
 const Texture = raylib.Texture;
 
-const util = @import("root").util;
-const math = @import("root").math;
+const root = @import("root");
+const util = root.util;
+const math = root.math;
 const Vec2 = math.Vec2;
 const Mat3 = math.Mat3;
 const Rect = math.geo.Rect;
+const ObjectStore = root.ObjectStore;
 
 const circuit_simulator = @import("circuit_simulator.zig");
 const CircuitSimulator = circuit_simulator.CircuitSimulator;
+const GateFactory = circuit_simulator.GateFactory;
 const LogicValue = circuit_simulator.LogicValue;
 const NetId = circuit_simulator.NetId;
 const GateId = circuit_simulator.GateId;
@@ -25,8 +28,12 @@ const NetTableEntry = circuit_simulator.NetTableEntry;
 const GateTableEntry = circuit_simulator.GateTableEntry;
 const SimulateGateFn = circuit_simulator.SimulateGateFn;
 
-const MouseButton = enum { left, right, middle };
 const LineSegment = struct {
+    a: Vec2(f32),
+    b: Vec2(f32),
+};
+const MouseButton = enum { left, right, middle };
+const ColoredLineSegment = struct {
     a: Vec2(f32),
     b: Vec2(f32),
     color: Color,
@@ -60,8 +67,10 @@ const BW_INSTA_SPAWN_BATCH_SIZE = 10;
 
 const PIN_TEX_PATH = "resources/pin.png";
 
-const MINOR_GRID_LINE_COLOR = Color{ .r = 200, .g = 200, .b = 200, .a = 255 };
-const MAJOR_GRID_LINE_COLOR = Color{ .r = 100, .g = 100, .b = 100, .a = 255 };
+const VOID_COLOR = Color{ .r = 20, .g = 49, .b = 65, .a = 255 };
+const GRID_BG_COLOR = Color{ .r = 65, .g = 94, .b = 120, .a = 255 };
+const MINOR_GRID_LINE_COLOR = Color{ .r = 63, .g = 108, .b = 155, .a = 255 };
+const MAJOR_GRID_LINE_COLOR = Color{ .r = 90, .g = 135, .b = 169, .a = 255 };
 
 const ResourceManager = struct {
     const Self = @This();
@@ -98,17 +107,23 @@ const Pin = struct {
     net_id: NetId,
     /// whether or not the pin is linked to a net
     is_connected: bool,
+    /// if true, net's created from or wired to this pin will have .is_input = true
+    is_primary: bool,
     position: Vec2(f32),
     adj_pins: ArrayList(PinId),
     dependant_comps: ArrayList(CompId),
+    comp_id: ?CompId,
+
     pub fn init(allocator: Allocator, pin_id: PinId, position: Vec2(f32)) Pin {
         return Pin{
             .pin_id = pin_id,
             .net_id = 0,
             .is_connected = false,
+            .is_primary = false,
             .position = position,
             .adj_pins = ArrayList(PinId).init(allocator),
             .dependant_comps = ArrayList(CompId).init(allocator),
+            .comp_id = null,
         };
     }
 
@@ -118,12 +133,11 @@ const Pin = struct {
 };
 
 const CompId = usize;
-const Component = struct {
+const WorldGate = struct {
     comp_id: CompId,
     gate_id: GateId,
     /// owned pins will move with the component when it is moved
-    in_pins: ArrayList(PinId),
-    out_pins: ArrayList(PinId),
+    owned_pins: ArrayList(PinId),
     position: Vec2(f32),
     rect: Rect(f32),
     color: Color,
@@ -135,45 +149,42 @@ const Component = struct {
             .gate_id = gate_id,
             .position = position,
             .rect = rect,
-            .in_pins = ArrayList(PinId).init(allocator),
-            .out_pins = ArrayList(PinId).init(allocator),
+            .owned_pins = ArrayList(PinId).init(allocator),
             .color = color,
         };
     }
 };
 
 const BlueprintId = usize;
-const ComponentBlueprint = struct {
+const GateBlueprint = struct {
     id: BlueprintId,
     rect: Rect(f32),
     color: Color,
     input_positions: ArrayList(Vec2(f32)),
-    output_positions: ArrayList(Vec2(f32)),
+    output_position: Vec2(f32),
     simulate_fn: SimulateGateFn,
 };
 
 const BlueprintFactory = struct {
-    pub fn _and(csim: *CircuitSimulator, gate_ptr: *GateTableEntry) LogicValue {
-        for (gate_ptr.inputs.items) |net_id| {
-            if (!csim.getValue(net_id)) {
-                return false;
-            }
-        }
-        return true;
-    }
-    pub fn and2(allocator: Allocator) !ComponentBlueprint {
-        var blueprint = ComponentBlueprint{
+    const Self = @This();
+    pub fn gate(allocator: Allocator, num_inputs: u32, gate_fn: SimulateGateFn) !GateBlueprint {
+        var h: f32 = 40;
+        var blueprint = GateBlueprint{
             .id = 0,
-            .rect = Rect(f32).init(Vec2(f32).zero, Vec2(f32).init(30, 40)),
+            .rect = Rect(f32).init(Vec2(f32).zero, Vec2(f32).init(30, h)),
             .input_positions = ArrayList(Vec2(f32)).init(allocator),
-            .output_positions = ArrayList(Vec2(f32)).init(allocator),
-            .color = raylib.PINK,
-            .simulate_fn = _and,
+            .output_position = Vec2(f32).init(25, 20),
+            .color = raylib.LIGHTGRAY,
+            .simulate_fn = gate_fn,
         };
-        try blueprint.input_positions.append(Vec2(f32).init(5, 10));
-        try blueprint.input_positions.append(Vec2(f32).init(5, 30));
-        try blueprint.output_positions.append(Vec2(f32).init(25, 20));
+        const step: f32 = h / @intToFloat(f32, num_inputs + 1);
+        for (0..num_inputs) |i| {
+            try blueprint.input_positions.append(Vec2(f32).init(7.5, step * @intToFloat(f32, i + 1)));
+        }
         return blueprint;
+    }
+    pub fn and2(allocator: Allocator) !GateBlueprint {
+        return try Self.gate(allocator, 2, GateFactory.AND);
     }
 };
 
@@ -192,8 +203,8 @@ const Logiverse = struct {
     // world state
     world_size: Vec2(f32),
     bounds: Rect(f32),
-    pins: ArrayList(Pin),
-    components: ArrayList(Component),
+    pins: ObjectStore(Pin),
+    components: ArrayList(WorldGate),
     obj_tags: ArrayList(ObjectTag),
 
     // world action state
@@ -210,11 +221,20 @@ const Logiverse = struct {
     pan_start: Vec2(f32),
     is_panning: bool,
 
+    hover_obj: ?usize,
+    hover_pos: Vec2(f32),
+
+    is_moving_obj: bool,
+    moving_obj_tag: ObjectTag,
+    moving_obj_start_pos: Vec2(f32),
     free_net_ids: ArrayList(NetId),
 
     // resources
+
     allocator: Allocator,
     resource_manager: ResourceManager,
+    net_color: ArrayList(Color),
+    rng: std.rand.Xoshiro256,
 
     pub fn init(allocator: Allocator, world_size: Vec2(f32), screen_size: Vec2(f32)) !Self {
         const bounds = Rect(f32).init(Vec2(f32).zero, world_size);
@@ -230,8 +250,8 @@ const Logiverse = struct {
                 100.0,
             ),
             .cam = Cam2(f32).init(screen_size, Mat3(f32).identity),
-            .pins = ArrayList(Pin).init(allocator),
-            .components = ArrayList(Component).init(allocator),
+            .pins = ObjectStore(Pin).init(allocator),
+            .components = ArrayList(WorldGate).init(allocator),
             .resource_manager = ResourceManager.init(allocator),
             .obj_tags = ArrayList(ObjectTag).init(allocator),
             .pan_start = Vec2(f32).zero,
@@ -240,6 +260,13 @@ const Logiverse = struct {
             .is_wiring = false,
             .wire_start_pin = 0,
             .free_net_ids = ArrayList(NetId).init(allocator),
+            .net_color = ArrayList(Color).init(allocator),
+            .rng = undefined,
+            .hover_obj = null,
+            .hover_pos = Vec2(f32).zero,
+            .is_moving_obj = false,
+            .moving_obj_tag = undefined,
+            .moving_obj_start_pos = Vec2(f32).zero,
         };
 
         try obj.resource_manager.loadTexture(PIN_TEX_PATH);
@@ -248,12 +275,30 @@ const Logiverse = struct {
         // add 10 input pins for testing
         for (0..10) |i| {
             const pin_id = try obj.spawnPin(Vec2(f32).init(20, (@intToFloat(f32, i) + 1) * 20), true);
-            const net_id = obj.pins.items[pin_id].net_id;
-            obj.csim.net_table.items[net_id].is_input = true;
+            var pin = obj.pins.getPtr(pin_id);
+            pin.is_primary = true;
+            const net_id = pin.net_id;
+            var net = obj.csim.net_table.getPtr(net_id);
+            net.is_input = true;
             try obj.csim.external_inputs.append(net_id);
         }
 
+        const random_seed = std.crypto.random.int(u64);
+        obj.rng = std.rand.Xoshiro256.init(random_seed);
+
         return obj;
+    }
+
+    pub fn get_net_color(self: *Self, net_id: NetId) !Color {
+        while (net_id >= self.net_color.items.len) {
+            try self.net_color.append(Color{
+                .r = @mod(self.rng.random().int(u8), 200) + 55,
+                .g = @mod(self.rng.random().int(u8), 200) + 55,
+                .b = @mod(self.rng.random().int(u8), 200) + 55,
+                .a = 100,
+            });
+        }
+        return self.net_color.items[net_id];
     }
 
     pub fn deinit(self: *Self) void {
@@ -271,157 +316,193 @@ const Logiverse = struct {
 
     pub fn spawnPin(self: *Self, world_pos: Vec2(f32), with_net: bool) !PinId {
         std.log.info("spawning pin at: ({d}, {d})", .{ world_pos.v[0], world_pos.v[1] });
-        const pinId = self.pins.items.len;
-        try self.pins.append(Pin.init(self.allocator, pinId, world_pos));
-        const tagId = try self.createObjectTag(.pin, pinId);
+        const pin_id = try self.pins.store(Pin.init(self.allocator, 0, world_pos));
+        const pin = self.pins.getPtr(pin_id);
+        pin.pin_id = pin_id;
+        const tagId = try self.createObjectTag(.pin, pin_id);
         _ = try self.spatial_hash.insert(world_pos, tagId);
         if (with_net) {
             const net_id = try self.csim.addNet(false);
-            self.pins.items[pinId].net_id = net_id;
-            self.pins.items[pinId].is_connected = true;
+            pin.net_id = net_id;
+            pin.is_connected = true;
         }
-        return pinId;
+        return pin_id;
     }
 
-    pub fn spawnComponentBlueprint(self: *Self, bp: *ComponentBlueprint, world_pos: Vec2(f32)) !void {
+    pub fn spawnComponentBlueprint(self: *Self, bp: *GateBlueprint, world_pos: Vec2(f32)) !void {
         const gate_id = self.csim.gate_table.items.len;
 
         try self.csim.gate_table.append(GateTableEntry{
             .id = gate_id,
             .inputs = ArrayList(NetId).init(self.allocator),
             .is_stale = true,
-            .outputs = ArrayList(NetId).init(self.allocator),
+            .output = 0,
             .simulate = bp.simulate_fn,
         });
 
         const comp_id = self.components.items.len;
+        var rect = bp.rect;
+        _ = rect.origin.addInPlace(world_pos);
+        try self.components.append(WorldGate.init(self.allocator, comp_id, gate_id, world_pos, rect, bp.color));
+        var wgate = &self.components.items[comp_id];
+
         for (bp.input_positions.items) |pos| {
             const pin_id = try self.spawnPin(world_pos.add(pos), true);
+            try wgate.owned_pins.append(pin_id);
             var pin = &self.pins.items[pin_id];
+            pin.comp_id = comp_id;
             var net = &self.csim.net_table.items[pin.net_id];
             try net.fanout.append(gate_id);
             try self.csim.gate_table.items[gate_id].inputs.append(pin.net_id);
-            // pin.dependant_comps.append(comp_id);
         }
 
-        for (bp.output_positions.items) |pos| {
-            const pin_id = try self.spawnPin(world_pos.add(pos), true);
-            try self.csim.gate_table.items[gate_id].outputs.append(self.pins.items[pin_id].net_id);
-        }
+        const pin_id = try self.spawnPin(world_pos.add(bp.output_position), true);
+        self.csim.gate_table.items[gate_id].output = self.pins.items[pin_id].net_id;
+        try wgate.owned_pins.append(pin_id);
 
-        var rect = bp.rect;
-        _ = rect.origin.addInPlace(world_pos);
-        try self.components.append(Component.init(self.allocator, comp_id, gate_id, world_pos, rect, bp.color));
         const tag_id = try self.createObjectTag(.component, comp_id);
         _ = try self.spatial_hash.insert(world_pos, tag_id);
     }
 
     pub inline fn check_pin_adjacency(self: *Self, pin_a_id: PinId, pin_b_id: PinId) bool {
-        var pin_a = &self.pins.items[pin_a_id];
+        var pin_a = self.pins.getPtr(pin_a_id);
         for (pin_a.adj_pins.items) |item| {
             if (item == pin_b_id) return true;
         }
         return false;
     }
 
-    pub fn wire(self: *Self, pin_a_id: PinId, pin_b_id: PinId) !void {
-        if (pin_a_id == pin_b_id) {
+    pub fn wire(self: *Self, p0: PinId, p1: PinId) !void {
+        if (p0 == p1) {
             std.log.info("those are the same pins, you fool!", .{});
             return;
         }
-        std.log.info("wire from {} to {}", .{ pin_a_id, pin_b_id });
-        if (self.check_pin_adjacency(pin_a_id, pin_b_id)) {
+        std.log.info("wire from {} to {}", .{ p0, p1 });
+        if (self.check_pin_adjacency(p0, p1)) {
             std.log.info("pins are already wired. abort!", .{});
             return;
         }
-        var pin_a = &self.pins.items[pin_a_id];
-        var pin_b = &self.pins.items[pin_b_id];
-        if (pin_a.is_connected and pin_b.is_connected) {
+        var pin0 = self.pins.getPtr(p0);
+        var pin1 = self.pins.getPtr(p1);
+        const any_primary = pin0.is_primary or pin1.is_primary;
+        const n0 = pin0.net_id;
+        const n1 = pin1.net_id;
+        if (pin0.is_connected and pin1.is_connected) {
             // merge corresponding nets (no directionality preference... yet)
-            try self.csim.merge_nets(pin_a.net_id, pin_b.net_id);
-            for (self.pins.items) |*pin| {
-                if (pin.net_id == pin_b.net_id) pin.net_id = pin_a.net_id;
+            try self.csim.mergeNets(n0, n1);
+            std.debug.print("after merge:\n", .{});
+            self.csim.printNetTable();
+            var pinIter = self.pins.iterator();
+            while (pinIter.next()) |pin| {
+                const pin_id = pin.pin_id;
+                if (pin.net_id == n1) {
+                    std.debug.print("p{} -> n{}\n", .{ pin_id, n0 });
+                    pin.net_id = n0;
+                }
+                std.debug.print("p{} point to n{}\n", .{ pin_id, pin.net_id });
             }
-        } else if (pin_a.is_connected and !pin_b.is_connected) {
+        } else if (pin0.is_connected and !pin1.is_connected) {
             // pin_b joins pin_a's net
-            pin_b.net_id = pin_a.net_id;
-        } else if (pin_b.is_connected and !pin_a.is_connected) {
+            pin1.net_id = pin0.net_id;
+        } else if (pin1.is_connected and !pin0.is_connected) {
             // pin_a joins pin_b's net
-            pin_a.net_id = pin_b.net_id;
+            pin0.net_id = pin1.net_id;
         } else {
             // neither are connected, create a new net
             const net_id = try self.csim.addNet(false);
-            pin_a.net_id = net_id;
-            pin_b.net_id = net_id;
+            pin0.net_id = net_id;
+            pin1.net_id = net_id;
         }
-        try pin_a.adj_pins.append(pin_b_id);
-        try pin_b.adj_pins.append(pin_a_id);
-        pin_a.is_connected = true;
-        pin_b.is_connected = true;
+        try pin0.adj_pins.append(p1);
+        try pin1.adj_pins.append(p0);
+        pin0.is_connected = true;
+        pin1.is_connected = true;
 
-        var net_a = &self.csim.net_table.items[pin_a.net_id];
-        var net_b = &self.csim.net_table.items[pin_a.net_id];
+        var net = self.csim.net_table.getPtr(pin0.net_id);
+
+        if (any_primary) net.is_input = true;
 
         // trigger re-simulation
-        if (net_a.is_input) net_a.is_undefined = true;
-        if (net_b.is_input) net_b.is_undefined = true;
+        if (net.is_input) net.is_undefined = true;
 
         self.csim.printNetTable();
+        self.csim.printGateTable();
     }
 
-    pub fn findPinAtPosition(self: *Self, world_pos: Vec2(f32)) !?PinId {
-        if (!self.bounds.containsPoint(world_pos)) return null;
-        const results = try self.spatial_hash.query(self.allocator, world_pos, 50.0);
-        for (results.items) |*item| {
-            const tagId = item.point_data.data;
-            const tag = self.obj_tags.items[tagId];
-            if (tag.variant == .pin and item.distance < PIN_WORLD_RADIUS) {
-                return tag.index;
+    fn removePin(self: *Self, pin_id: PinId) !void {
+        std.debug.print("removePin {}\n", .{pin_id});
+        var exiled_pin = self.pins.getPtr(pin_id);
+        var exiled_net_id = exiled_pin.net_id;
+
+        // step 1: record info about all wires in pin's net
+        var wire_list = ArrayList(LineSegment).init(self.allocator);
+        defer wire_list.deinit();
+        var pinIter = self.pins.iterator();
+        while (pinIter.next()) |pin0| {
+            const p0 = pin0.pin_id;
+            if (pin0.net_id != exiled_net_id) continue;
+            for (pin0.adj_pins.items) |p1| {
+                // avoid counting each edge twice
+                if (p1 > p0) {
+                    var pin1 = self.pins.getPtr(p1);
+                    try wire_list.append(LineSegment{
+                        .a = pin0.position,
+                        .b = pin1.position,
+                    });
+                }
             }
         }
-        return null;
+
+        // TODO
+
+        // step 2: remove net from csim
+        // self.csim.freeNet(exiled_net_id);
+
+        // step 3: remove pin and all wires we recorded info about
+
+        // step 4: re-wire all wires which did not connect to pin
     }
 
     pub fn _mouseButtonDown(self: *Self, button: MouseButton, screen_pos: Vec2(f32)) !void {
         if (button == .left) {
-            const world_pos = self.cam.screenToWorld(screen_pos);
-            if (self.bounds.containsPoint(world_pos)) {
-                const results = try self.spatial_hash.query(self.allocator, world_pos, 50.0);
-                var clicked_object = false;
-                for (results.items) |*item| {
-                    const tagId = item.point_data.data;
-                    const tag = self.obj_tags.items[tagId];
-                    if (tag.variant == .pin and item.distance < PIN_WORLD_RADIUS) {
-                        clicked_object = true;
-                        self.is_wiring = true;
-                        std.log.info("start wiring from pin {}", .{tag.index});
-                        self.wire_start_pin = tag.index;
-                        break;
-                    }
-                    if (tag.variant == .component) {
-                        var component = self.components.items[tag.index];
-                        if (component.rect.containsPoint(world_pos)) {
-                            clicked_object = true;
-                            // TODO start dragging component
-                            std.log.info("clicked component {}", .{tag.index});
-                        } else {
-                            std.log.info("nearby component wasn't clicked...", .{});
-                            component.rect.debugPrint();
-                        }
-                    }
-                }
-                if (!clicked_object) {
-                    _ = try self.spawnPin(world_pos, false);
-                }
-            } else {
-                std.log.info("OOB clicked", .{});
+            if (self.hover_obj == null) {
+                _ = try self.spawnPin(self.hover_pos, false);
+                // TODO place various stuff instead of just pins
+                // const world_pos = self.cam.screenToWorld(screen_pos);
+                // if (self.bounds.containsPoint(world_pos)) {
+                //     var bp = try BlueprintFactory.and2(self.allocator);
+                //     try self.spawnComponentBlueprint(&bp, world_pos);
+                // }
+                return;
+            }
+            // action depends on what type of object we're hovering over
+            const tag = self.obj_tags.items[self.hover_obj.?];
+            switch (tag.variant) {
+                .component => {
+                    std.log.info("clicked component {}", .{tag.index});
+                    // TODO start dragging component?
+                },
+                .pin => {
+                    self.is_wiring = true;
+                    self.wire_start_pin = tag.index;
+                    std.log.info("start wiring from pin {}...\n", .{tag.index});
+                },
             }
         } else if (button == .right) {
-            std.log.info("right mouse down - noop", .{});
-            const world_pos = self.cam.screenToWorld(screen_pos);
-            if (self.bounds.containsPoint(world_pos)) {
-                var bp = try BlueprintFactory.and2(self.allocator);
-                try self.spawnComponentBlueprint(&bp, world_pos);
+            if (self.hover_obj == null) {
+                std.log.info("right mouse down - noop", .{});
+                return;
+            }
+            const tag = self.obj_tags.items[self.hover_obj.?];
+            switch (tag.variant) {
+                .component => {
+                    std.log.info("right clicked component {}", .{tag.index});
+                    // TODO delete component
+                },
+                .pin => {
+                    std.log.info("right clicked pin {}", .{tag.index});
+                    try self.removePin(tag.index);
+                },
             }
         } else {
             self.pan_start = screen_pos;
@@ -431,15 +512,14 @@ const Logiverse = struct {
     }
 
     pub fn _mouseButtonUp(self: *Self, button: MouseButton, screen_pos: Vec2(f32)) !void {
+        _ = screen_pos;
         if (button == .left) {
             if (self.is_wiring) {
-                const world_pos = self.cam.screenToWorld(screen_pos);
-                const maybe_pin_id = try self.findPinAtPosition(world_pos);
-                if (maybe_pin_id == null) {
+                const maybe_obj_tag = if (self.hover_obj == null) null else self.obj_tags.items[self.hover_obj.?];
+                if (maybe_obj_tag == null or maybe_obj_tag.?.variant != .pin) {
                     std.log.info("cancel wire", .{});
                 } else {
-                    const pin_id = maybe_pin_id.?;
-                    try self.wire(self.wire_start_pin, pin_id);
+                    try self.wire(self.wire_start_pin, maybe_obj_tag.?.index);
                 }
                 self.is_wiring = false;
             }
@@ -458,16 +538,57 @@ const Logiverse = struct {
             const delta = screen_pos.sub(self.pan_start);
             self.cam.applyTransform(Mat3(f32).txTranslate(delta.v[0], delta.v[1]));
             self.pan_start = screen_pos;
+            return;
+        }
+        // update hover_obj
+        self.hover_obj = null;
+        const world_pos = self.cam.screenToWorld(screen_pos);
+        self.hover_pos = world_pos;
+        if (!self.bounds.containsPoint(world_pos)) {
+            return;
+        }
+        const results = try self.spatial_hash.query(self.allocator, world_pos, 50.0);
+        for (results.items) |*item| {
+            const tagId = item.point_data.data;
+            const tag = self.obj_tags.items[tagId];
+            if (tag.variant == .pin and item.distance < PIN_WORLD_RADIUS) {
+                self.hover_obj = tagId;
+                break;
+            }
+            if (tag.variant == .component) {
+                var component = self.components.items[tag.index];
+                if (component.rect.containsPoint(world_pos)) {
+                    self.hover_obj = tagId;
+                    break;
+                }
+            }
+        }
+        if (self.hover_obj != null) {
+            std.debug.print("hover: {}\n", .{self.hover_obj.?});
         }
     }
 
     pub fn _update(self: *Self, dt: f32) !void {
-        if (raylib.IsKeyDown(raylib.KEY_ONE)) {
-            const net_id = self.csim.external_inputs.items[0];
-            // const prev = self.net_table.items[net_id].external_signal;
-            self.csim.net_table.items[net_id].external_signal = true;
+        const num_keys = [_]c_int{
+            raylib.KEY_ONE,
+            raylib.KEY_TWO,
+            raylib.KEY_THREE,
+            raylib.KEY_FOUR,
+            raylib.KEY_FIVE,
+            raylib.KEY_SIX,
+            raylib.KEY_SEVEN,
+            raylib.KEY_EIGHT,
+        };
+        for (num_keys, 0..) |num_key, idx| {
+            if (raylib.IsKeyPressed(num_key)) {
+                const net_id = self.csim.external_inputs.items[idx];
+                var net = self.csim.net_table.getPtr(net_id);
+                const prev = net.external_signal;
+                net.external_signal = !prev;
+            }
         }
-        if (raylib.IsKeyDown(raylib.KEY_Z)) {
+
+        if (raylib.IsKeyPressed(raylib.KEY_Z)) {
             std.debug.print("\n", .{});
             self.csim.printNetTable();
         }
@@ -491,11 +612,18 @@ const Logiverse = struct {
         inline for (0..5) |c_i| {
             screen_points[c_i] = RectTexCoords[c_i].subScalar(0.5).mulScalar(k);
         }
-        var wires_to_draw = ArrayList(LineSegment).init(self.allocator);
+        var wires_to_draw = ArrayList(ColoredLineSegment).init(self.allocator);
         defer wires_to_draw.deinit();
-        for (self.pins.items, 0..) |*pin, pin_id| {
+        var pinIter = self.pins.iterator();
+        var t: usize = 0;
+        while (pinIter.next()) |pin| {
+            t += 1;
+            const pin_id = pin.pin_id;
             const is_active = if (!pin.is_connected) false else self.csim.getValue(pin.net_id);
-            const color = if (is_active) raylib.YELLOW else raylib.GRAY;
+            const pin_tint = if (is_active) raylib.YELLOW else raylib.WHITE;
+            const wire_color = if (is_active) raylib.YELLOW else raylib.GRAY;
+            const net_color = try self.get_net_color(pin.net_id);
+            var net = self.csim.net_table.getPtr(pin.net_id);
             const world_pos = pin.position;
             if (pin_id == self.wire_start_pin) {
                 wire_start_world_pos = world_pos;
@@ -504,19 +632,27 @@ const Logiverse = struct {
                 continue;
             }
             const screen_pos = self.cam.worldToScreen(world_pos);
+            if (pin.is_connected and net.is_input) {
+                raylib.DrawCircleV(screen_pos.toRaylibVector2(), k * 0.5, raylib.GREEN);
+            }
+            if (pin_id == self.hover_obj) {
+                raylib.DrawCircleV(screen_pos.toRaylibVector2(), k * 0.75, raylib.YELLOW);
+            }
+            if (pin.is_connected) raylib.DrawCircleV(screen_pos.toRaylibVector2(), k * 0.75, net_color);
             gfx.drawTexturePoly(
                 pin_tex,
                 screen_pos,
                 screen_points[0..],
                 @constCast(RectTexCoords[0..]),
-                color,
+                pin_tint,
             );
             for (pin.adj_pins.items) |adj_pin_id| {
                 if (adj_pin_id > pin_id) {
-                    try wires_to_draw.append(LineSegment{
+                    const other_pin = self.pins.getPtr(adj_pin_id);
+                    try wires_to_draw.append(ColoredLineSegment{
                         .a = world_pos,
-                        .b = self.pins.items[adj_pin_id].position,
-                        .color = color,
+                        .b = other_pin.position,
+                        .color = wire_color,
                     });
                 }
             }
@@ -530,23 +666,6 @@ const Logiverse = struct {
             const start = self.cam.worldToScreen(wire_start_world_pos);
             raylib.DrawLineEx(start.toRaylibVector2(), self.mouse_pos.toRaylibVector2(), 2, raylib.ORANGE);
         }
-    }
-
-    pub fn pointQuery(self: *Self, point: Vec2(f32)) !void {
-        const search_radius = 10;
-        var results = try self.spatial_hash.query(self.allocator, point, search_radius);
-        if (results.items.len == 0) {
-            std.log.info("no elements in sight", .{});
-            return;
-        }
-        var greatest_index: usize = 0;
-        for (results.items) |item| {
-            const index = item.point_data.data;
-            if (index > greatest_index) {
-                greatest_index = index;
-            }
-        }
-        std.log.info("pointQuery found index: {}", .{greatest_index});
     }
 };
 
@@ -654,11 +773,15 @@ pub fn initiateCircuitSandbox() !void {
         {
             const t0 = std.time.milliTimestamp();
             raylib.BeginDrawing();
-            raylib.ClearBackground(raylib.RAYWHITE);
+            raylib.ClearBackground(VOID_COLOR);
 
             // GRID LINES
             if (draw_grid_lines) {
                 var grid_size = world.bounds.size.div(Vec2(f32).init(grid_div, grid_div));
+                var origin = cam.worldToScreen(world.bounds.origin);
+                var maxPoint = cam.worldToScreen(origin.add(world.bounds.size));
+                var screenSize = maxPoint.sub(origin);
+                raylib.DrawRectangleV(origin.toRaylibVector2(), screenSize.toRaylibVector2(), GRID_BG_COLOR);
                 var world_x: f32 = 0;
                 var c: u32 = 0;
                 while (world_x <= world.bounds.size.v[0]) : ({

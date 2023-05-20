@@ -7,7 +7,7 @@ pub const rlgl = @cImport(@cInclude("rlgl.h"));
 
 pub const math = @import("math/math.zig");
 const Vec2 = math.Vec2;
-const Rect = math.Rect;
+const Rect = math.geo.Rect;
 const Mat3 = math.Mat3;
 
 pub const geo = @import("math/geo/geo.zig");
@@ -15,14 +15,18 @@ pub const gfx = @import("gfx.zig");
 pub const cam = @import("cam.zig");
 pub const util = @import("util.zig");
 
+pub const ObjectStore = @import("object_store.zig").ObjectStore;
+
 const bunnyTest = @import("bunny_test.zig").bunnyTest;
+const circuitTest = @import("circuits/circuit_simulator.zig").circuitTest;
 const initiateCircuitSandbox = @import("circuits/sandbox.zig").initiateCircuitSandbox;
 
 pub fn main() !void {
     std.debug.print("It's a busy day ahead!\n", .{});
-    // try geo.doRadiusQueryBenchmark();
-    // try bunnyTest();
     try initiateCircuitSandbox();
+    // try circuitTest();
+    // try bunnyTest();
+    // try geo.doRadiusQueryBenchmark();
 }
 
 test "simple test" {
@@ -181,4 +185,40 @@ test "print ArrayList wait does this work?" {
     var buff: [100]u8 = undefined;
     const formatted_slice = try std.fmt.bufPrint(&buff, "{any}", .{list.items});
     try std.testing.expectEqualSlices(u8, "{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 }", formatted_slice);
+}
+
+test "ObjectStore works" {
+    const allocator = std.heap.page_allocator;
+    var objs = ObjectStore(usize).init(allocator);
+    for (0..5) |i| {
+        _ = try objs.store(i);
+    }
+
+    var cursedIndex: usize = 3;
+    try std.testing.expectEqual(cursedIndex, objs.get(cursedIndex));
+    try objs.remove(cursedIndex);
+
+    // this will give unreachable error:
+    // _ = objs.get(5);
+
+    var bob: usize = 99;
+    var bobId = try objs.store(bob);
+
+    // previously removed index should have been recycled:
+    try std.testing.expectEqual(cursedIndex, bobId);
+    try std.testing.expectEqual(bob, objs.get(cursedIndex));
+
+    var iter = objs.iterator();
+    var obj0 = iter.next();
+    try std.testing.expectEqual(@as(?usize, 0), obj0);
+    var obj1 = iter.next();
+    try std.testing.expectEqual(@as(?usize, 1), obj1);
+    var obj2 = iter.next();
+    try std.testing.expectEqual(@as(?usize, 2), obj2);
+    var obj3 = iter.next();
+    try std.testing.expectEqual(@as(?usize, bob), obj3);
+    var obj4 = iter.next();
+    try std.testing.expectEqual(@as(?usize, 4), obj4);
+    var obj5 = iter.next();
+    try std.testing.expectEqual(@as(?usize, null), obj5);
 }
