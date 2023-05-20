@@ -3,6 +3,7 @@ const Allocator = std.mem.Allocator;
 const StringHashMap = std.StringHashMap;
 const ArrayList = std.ArrayList;
 const TailQueue = std.TailQueue;
+const AutoHashMap = std.AutoHashMap;
 const AutoArrayHashMap = std.AutoArrayHashMap;
 
 pub const raylib = @cImport(@cInclude("raylib.h"));
@@ -28,11 +29,20 @@ const NetTableEntry = circuit_simulator.NetTableEntry;
 const GateTableEntry = circuit_simulator.GateTableEntry;
 const SimulateGateFn = circuit_simulator.SimulateGateFn;
 
-const LineSegment = struct {
-    a: Vec2(f32),
-    b: Vec2(f32),
-};
+const _obj = @import("obj.zig");
+const ObjectHandle = _obj.ObjectHandle;
+const ObjectVariant = _obj.ObjectVariant;
+const ObjectFnTable = _obj.ObjectFnTable;
+const NoopObjFns = _obj.NoopObjFns;
+
+const Pin = @import("obj_defs/pin.zig").Pin;
+
+// const LineSegment = struct {
+//     a: Vec2(f32),
+//     b: Vec2(f32),
+// };
 const MouseButton = enum { left, right, middle };
+
 const ColoredLineSegment = struct {
     a: Vec2(f32),
     b: Vec2(f32),
@@ -56,6 +66,8 @@ const RectTexCoords = [5]Vec2(f32){
     Vec2(f32).init(1, 0),
     Vec2(f32).init(0, 0),
 };
+
+const WIRE_WIDTH: f32 = 2.5;
 
 const BW_WIDTH = 1000;
 const BW_HEIGHT = 1000;
@@ -91,53 +103,12 @@ const ResourceManager = struct {
     }
 };
 
-const ObjectVariant = enum { pin, component };
-
-const ObjectTag = struct {
-    variant: ObjectVariant,
-    index: usize,
-};
-
-// in the Logiverse, NetTableEntries, or "nets" for short,
-// are tied to their virtually-physical representations "pins"
-// in other words, a pin is the render info for a net
-const PinId = usize;
-const Pin = struct {
-    pin_id: PinId,
-    net_id: NetId,
-    /// whether or not the pin is linked to a net
-    is_connected: bool,
-    /// if true, net's created from or wired to this pin will have .is_input = true
-    is_primary: bool,
-    position: Vec2(f32),
-    adj_pins: ArrayList(PinId),
-    dependant_comps: ArrayList(CompId),
-    comp_id: ?CompId,
-
-    pub fn init(allocator: Allocator, pin_id: PinId, position: Vec2(f32)) Pin {
-        return Pin{
-            .pin_id = pin_id,
-            .net_id = 0,
-            .is_connected = false,
-            .is_primary = false,
-            .position = position,
-            .adj_pins = ArrayList(PinId).init(allocator),
-            .dependant_comps = ArrayList(CompId).init(allocator),
-            .comp_id = null,
-        };
-    }
-
-    pub fn deinit(self: *Pin) void {
-        self.adj_pins.deinit();
-    }
-};
-
 const CompId = usize;
 const WorldGate = struct {
     comp_id: CompId,
     gate_id: GateId,
     /// owned pins will move with the component when it is moved
-    owned_pins: ArrayList(PinId),
+    owned_pins: ArrayList(usize),
     position: Vec2(f32),
     rect: Rect(f32),
     color: Color,
@@ -149,7 +120,7 @@ const WorldGate = struct {
             .gate_id = gate_id,
             .position = position,
             .rect = rect,
-            .owned_pins = ArrayList(PinId).init(allocator),
+            .owned_pins = ArrayList(usize).init(allocator),
             .color = color,
         };
     }
@@ -188,12 +159,20 @@ const BlueprintFactory = struct {
     }
 };
 
+// const BlueprintBelt = struct {
+//     const Self = @This();
+//     pub fn init(allocator: Allocator) Self {
+//         return Self{};
+//     }
+//     pub fn deinit(self: *Self) void {}
+// };
+
 const LogiverseEvent = struct {
     net_id: usize,
     value: LogicValue,
 };
 
-const Logiverse = struct {
+pub const Logiverse = struct {
     const Self = @This();
     const SpatialHash = geo.spatial_hash.SpatialHash(f32, usize);
 
@@ -203,13 +182,16 @@ const Logiverse = struct {
     // world state
     world_size: Vec2(f32),
     bounds: Rect(f32),
+
+    handles: ObjectStore(ObjectHandle),
+    obj_fns: [3]ObjectFnTable,
+
     pins: ObjectStore(Pin),
-    components: ArrayList(WorldGate),
-    obj_tags: ArrayList(ObjectTag),
+    components: ObjectStore(WorldGate),
 
     // world action state
     is_wiring: bool,
-    wire_start_pin: PinId,
+    wire_start_pin: usize,
 
     // qt: QuadTree,
     spatial_hash: SpatialHash,
@@ -221,16 +203,14 @@ const Logiverse = struct {
     pan_start: Vec2(f32),
     is_panning: bool,
 
-    hover_obj: ?usize,
+    hover_handle_id: ?usize,
     hover_pos: Vec2(f32),
 
     is_moving_obj: bool,
-    moving_obj_tag: ObjectTag,
+    moving_obj_tag: ObjectHandle,
     moving_obj_start_pos: Vec2(f32),
-    free_net_ids: ArrayList(NetId),
 
     // resources
-
     allocator: Allocator,
     resource_manager: ResourceManager,
     net_color: ArrayList(Color),
@@ -244,49 +224,73 @@ const Logiverse = struct {
             .world_size = world_size,
             .screen_size = screen_size,
             .bounds = Rect(f32).init(Vec2(f32).zero, world_size),
+            .cam = Cam2(f32).init(screen_size, Mat3(f32).identity),
             .spatial_hash = try SpatialHash.init(
                 allocator,
                 bounds,
                 100.0,
             ),
-            .cam = Cam2(f32).init(screen_size, Mat3(f32).identity),
-            .pins = ObjectStore(Pin).init(allocator),
-            .components = ArrayList(WorldGate).init(allocator),
             .resource_manager = ResourceManager.init(allocator),
-            .obj_tags = ArrayList(ObjectTag).init(allocator),
+            .pins = ObjectStore(Pin).init(allocator),
+            .components = ObjectStore(WorldGate).init(allocator),
+            .handles = ObjectStore(ObjectHandle).init(allocator),
             .pan_start = Vec2(f32).zero,
             .mouse_pos = Vec2(f32).zero,
             .is_panning = false,
             .is_wiring = false,
             .wire_start_pin = 0,
-            .free_net_ids = ArrayList(NetId).init(allocator),
             .net_color = ArrayList(Color).init(allocator),
             .rng = undefined,
-            .hover_obj = null,
+            .hover_handle_id = null,
             .hover_pos = Vec2(f32).zero,
             .is_moving_obj = false,
             .moving_obj_tag = undefined,
             .moving_obj_start_pos = Vec2(f32).zero,
+            .obj_fns = undefined,
         };
 
         try obj.resource_manager.loadTexture(PIN_TEX_PATH);
 
         obj.cam.centerOnInstant(Vec2(f32).init(0, 0));
+
+        obj.initObjFns();
         // add 10 input pins for testing
         for (0..10) |i| {
-            const pin_id = try obj.spawnPin(Vec2(f32).init(20, (@intToFloat(f32, i) + 1) * 20), true);
+            // const pin_id = try obj.spawnPin(Vec2(f32).init(20, (@intToFloat(f32, i) + 1) * 20), true);
+            const net_id = try obj.csim.addNet(true);
+            const world_pos = Vec2(f32).init(20, (@intToFloat(f32, i) + 1) * 20);
+            const handle = try obj.spawnObject(.pin, world_pos);
+            const pin_id = handle.obj_id;
             var pin = obj.pins.getPtr(pin_id);
             pin.is_primary = true;
-            const net_id = pin.net_id;
-            var net = obj.csim.net_table.getPtr(net_id);
-            net.is_input = true;
-            try obj.csim.external_inputs.append(net_id);
+            pin.is_connected = true;
+            pin.net_id = net_id;
         }
 
         const random_seed = std.crypto.random.int(u64);
         obj.rng = std.rand.Xoshiro256.init(random_seed);
 
         return obj;
+    }
+
+    fn initObjFns(self: *Self) void {
+        self.obj_fns[@enumToInt(ObjectVariant.pin)] = Pin.obj_fn_table;
+        self.obj_fns[@enumToInt(ObjectVariant.wire)] = ObjectFnTable{
+            .spawn = NoopObjFns.spawn,
+            .delete = NoopObjFns.delete,
+            .update = NoopObjFns.update,
+            .render = NoopObjFns.render,
+        };
+        self.obj_fns[@enumToInt(ObjectVariant.component)] = ObjectFnTable{
+            .spawn = NoopObjFns.spawn,
+            .delete = NoopObjFns.delete,
+            .update = NoopObjFns.update,
+            .render = NoopObjFns.render,
+        };
+    }
+
+    pub inline fn getHandle(self: *Self, handle_id: usize) *ObjectHandle {
+        return self.handles.getPtr(handle_id);
     }
 
     pub fn get_net_color(self: *Self, net_id: NetId) !Color {
@@ -305,28 +309,29 @@ const Logiverse = struct {
         self.csim.deinit();
     }
 
-    pub fn createObjectTag(self: *Self, variant: ObjectVariant, index: usize) !usize {
-        const tag_index = self.obj_tags.items.len;
-        try self.obj_tags.append(ObjectTag{
+    pub fn spawnObject(self: *Self, variant: ObjectVariant, world_pos: Vec2(f32)) !*ObjectHandle {
+        const h_id = try self.handles.store(ObjectHandle{
+            .id = 0,
             .variant = variant,
-            .index = index,
+            .obj_id = 0,
+            .position = world_pos,
+            .rel_bounds = Rect(f32).init(Vec2(f32).zero, Vec2(f32).init(1, 1)),
         });
-        return tag_index;
+        var handle = self.getHandle(h_id);
+        const fn_table = self.obj_fns[@enumToInt(handle.variant)];
+        const obj_id = try fn_table.spawn(self, handle);
+        handle.obj_id = obj_id;
+        handle.id = h_id;
+        _ = try self.spatial_hash.insert(world_pos, h_id);
+        return handle;
     }
 
-    pub fn spawnPin(self: *Self, world_pos: Vec2(f32), with_net: bool) !PinId {
-        std.log.info("spawning pin at: ({d}, {d})", .{ world_pos.v[0], world_pos.v[1] });
-        const pin_id = try self.pins.store(Pin.init(self.allocator, 0, world_pos));
-        const pin = self.pins.getPtr(pin_id);
-        pin.pin_id = pin_id;
-        const tagId = try self.createObjectTag(.pin, pin_id);
-        _ = try self.spatial_hash.insert(world_pos, tagId);
-        if (with_net) {
-            const net_id = try self.csim.addNet(false);
-            pin.net_id = net_id;
-            pin.is_connected = true;
-        }
-        return pin_id;
+    pub fn removeObject(self: *Self, handle_id: usize) !void {
+        _ = self.spatial_hash.remove(handle_id);
+        var handle = self.getHandle(handle_id);
+        const fn_table = self.obj_fns[@enumToInt(handle.variant)];
+        try fn_table.delete(self, handle);
+        try self.handles.remove(handle_id);
     }
 
     pub fn spawnComponentBlueprint(self: *Self, bp: *GateBlueprint, world_pos: Vec2(f32)) !void {
@@ -340,31 +345,37 @@ const Logiverse = struct {
             .simulate = bp.simulate_fn,
         });
 
-        const comp_id = self.components.items.len;
         var rect = bp.rect;
         _ = rect.origin.addInPlace(world_pos);
-        try self.components.append(WorldGate.init(self.allocator, comp_id, gate_id, world_pos, rect, bp.color));
-        var wgate = &self.components.items[comp_id];
+        const comp_id = try self.components.store(WorldGate.init(self.allocator, 0, gate_id, world_pos, rect, bp.color));
+        var wgate = self.components.getPtr(comp_id);
+        wgate.comp_id = comp_id;
 
-        for (bp.input_positions.items) |pos| {
-            const pin_id = try self.spawnPin(world_pos.add(pos), true);
+        var gate = self.csim.gate_table.getPtr(gate_id);
+
+        for (bp.input_positions.items) |in_pos| {
+            const pos = world_pos.add(in_pos);
+            const handle = self.spawnObject(.pin, pos);
+            const pin_id = handle.obj_id;
             try wgate.owned_pins.append(pin_id);
-            var pin = &self.pins.items[pin_id];
+            var pin = self.pins.getPtr(pin_id);
+            const net_id = self.csim.addNet(false);
+            pin.net_id = net_id;
             pin.comp_id = comp_id;
-            var net = &self.csim.net_table.items[pin.net_id];
+            var net = self.csim.net_table.getPtr(net_id);
             try net.fanout.append(gate_id);
-            try self.csim.gate_table.items[gate_id].inputs.append(pin.net_id);
+            try gate.inputs.append(pin.net_id);
         }
 
         const pin_id = try self.spawnPin(world_pos.add(bp.output_position), true);
-        self.csim.gate_table.items[gate_id].output = self.pins.items[pin_id].net_id;
+        gate.output = self.pins.items[pin_id].net_id;
         try wgate.owned_pins.append(pin_id);
 
-        const tag_id = try self.createObjectTag(.component, comp_id);
+        const tag_id = try self.spawnObject(.component, comp_id);
         _ = try self.spatial_hash.insert(world_pos, tag_id);
     }
 
-    pub inline fn check_pin_adjacency(self: *Self, pin_a_id: PinId, pin_b_id: PinId) bool {
+    pub inline fn check_pin_adjacency(self: *Self, pin_a_id: usize, pin_b_id: usize) bool {
         var pin_a = self.pins.getPtr(pin_a_id);
         for (pin_a.adj_pins.items) |item| {
             if (item == pin_b_id) return true;
@@ -372,7 +383,7 @@ const Logiverse = struct {
         return false;
     }
 
-    pub fn wire(self: *Self, p0: PinId, p1: PinId) !void {
+    pub fn wirePins(self: *Self, p0: usize, p1: usize) !void {
         if (p0 == p1) {
             std.log.info("those are the same pins, you fool!", .{});
             return;
@@ -394,7 +405,7 @@ const Logiverse = struct {
             self.csim.printNetTable();
             var pinIter = self.pins.iterator();
             while (pinIter.next()) |pin| {
-                const pin_id = pin.pin_id;
+                const pin_id = pin.id;
                 if (pin.net_id == n1) {
                     std.debug.print("p{} -> n{}\n", .{ pin_id, n0 });
                     pin.net_id = n0;
@@ -429,79 +440,101 @@ const Logiverse = struct {
         self.csim.printGateTable();
     }
 
-    fn removePin(self: *Self, pin_id: PinId) !void {
-        std.debug.print("removePin {}\n", .{pin_id});
-        var exiled_pin = self.pins.getPtr(pin_id);
-        var exiled_net_id = exiled_pin.net_id;
-
-        // step 1: record info about all wires in pin's net
-        var wire_list = ArrayList(LineSegment).init(self.allocator);
-        defer wire_list.deinit();
-        var pinIter = self.pins.iterator();
-        while (pinIter.next()) |pin0| {
-            const p0 = pin0.pin_id;
-            if (pin0.net_id != exiled_net_id) continue;
-            for (pin0.adj_pins.items) |p1| {
-                // avoid counting each edge twice
-                if (p1 > p0) {
-                    var pin1 = self.pins.getPtr(p1);
-                    try wire_list.append(LineSegment{
-                        .a = pin0.position,
-                        .b = pin1.position,
-                    });
+    pub fn updateHoverObj(self: *Self) !void {
+        const prev_hover_obj = self.hover_handle_id;
+        self.hover_handle_id = null;
+        const world_pos = self.cam.screenToWorld(self.mouse_pos);
+        self.hover_pos = world_pos;
+        if (!self.bounds.containsPoint(world_pos)) {
+            return;
+        }
+        const results = try self.spatial_hash.query(self.allocator, world_pos, 50.0);
+        for (results.items) |*item| {
+            const h_id = item.point_data.data;
+            const handle = self.getHandle(h_id);
+            if (handle.variant == .pin and item.distance < PIN_WORLD_RADIUS) {
+                self.hover_handle_id = h_id;
+                break;
+            }
+            if (handle.variant == .component) {
+                var component = self.components.getPtr(handle.obj_id);
+                if (component.rect.containsPoint(world_pos)) {
+                    self.hover_handle_id = h_id;
+                    break;
                 }
             }
         }
-
-        // TODO
-
-        // step 2: remove net from csim
-        // self.csim.freeNet(exiled_net_id);
-
-        // step 3: remove pin and all wires we recorded info about
-
-        // step 4: re-wire all wires which did not connect to pin
+        if (self.hover_handle_id != prev_hover_obj) {
+            std.debug.print("hover: {?}\n", .{self.hover_handle_id});
+            if (self.hover_handle_id == null) return;
+            var handle = self.getHandle(self.hover_handle_id.?);
+            switch (handle.variant) {
+                .component => {
+                    // var component = self.components.getPtr(tag.index);
+                    std.debug.print("hover component: {}\n", .{handle.obj_id});
+                },
+                .pin => {
+                    var pin = self.pins.getPtr(handle.obj_id);
+                    var net_id: ?usize = if (pin.is_connected) pin.net_id else null;
+                    std.debug.print("hover pin: {} (net {?})\n", .{ handle.obj_id, net_id });
+                },
+                .wire => {
+                    std.debug.print("hover wire: {}\n", .{handle.obj_id});
+                },
+            }
+        }
     }
 
     pub fn _mouseButtonDown(self: *Self, button: MouseButton, screen_pos: Vec2(f32)) !void {
         if (button == .left) {
-            if (self.hover_obj == null) {
-                _ = try self.spawnPin(self.hover_pos, false);
+            if (self.hover_handle_id == null) {
+                // _ = try self.spawnPin(self.hover_pos, false);
+                _ = try self.spawnObject(.pin, self.hover_pos);
                 // TODO place various stuff instead of just pins
                 // const world_pos = self.cam.screenToWorld(screen_pos);
                 // if (self.bounds.containsPoint(world_pos)) {
                 //     var bp = try BlueprintFactory.and2(self.allocator);
                 //     try self.spawnComponentBlueprint(&bp, world_pos);
                 // }
+                try self.updateHoverObj();
                 return;
             }
             // action depends on what type of object we're hovering over
-            const tag = self.obj_tags.items[self.hover_obj.?];
-            switch (tag.variant) {
+            const handle = self.getHandle(self.hover_handle_id.?);
+            switch (handle.variant) {
                 .component => {
-                    std.log.info("clicked component {}", .{tag.index});
+                    std.log.info("clicked component {}", .{handle.obj_id});
                     // TODO start dragging component?
                 },
                 .pin => {
                     self.is_wiring = true;
-                    self.wire_start_pin = tag.index;
-                    std.log.info("start wiring from pin {}...\n", .{tag.index});
+                    self.wire_start_pin = handle.obj_id;
+                    std.log.info("start wiring from pin {}...\n", .{handle.obj_id});
+                },
+                .wire => {
+                    std.log.info("clicked wire {}", .{handle.obj_id});
+                    // TODO start dragging wire?
                 },
             }
         } else if (button == .right) {
-            if (self.hover_obj == null) {
+            if (self.hover_handle_id == null) {
                 std.log.info("right mouse down - noop", .{});
                 return;
             }
-            const tag = self.obj_tags.items[self.hover_obj.?];
-            switch (tag.variant) {
+            const handle = self.getHandle(self.hover_handle_id.?);
+            switch (handle.variant) {
                 .component => {
-                    std.log.info("right clicked component {}", .{tag.index});
+                    std.log.info("right clicked component {}", .{handle.obj_id});
                     // TODO delete component
                 },
                 .pin => {
-                    std.log.info("right clicked pin {}", .{tag.index});
-                    try self.removePin(tag.index);
+                    std.log.info("right clicked pin {}", .{handle.obj_id});
+                    try self.removeObject(handle.id);
+                    try self.updateHoverObj();
+                },
+                .wire => {
+                    std.log.info("right clicked wire {}", .{handle.obj_id});
+                    // TODO delete wire
                 },
             }
         } else {
@@ -515,11 +548,11 @@ const Logiverse = struct {
         _ = screen_pos;
         if (button == .left) {
             if (self.is_wiring) {
-                const maybe_obj_tag = if (self.hover_obj == null) null else self.obj_tags.items[self.hover_obj.?];
-                if (maybe_obj_tag == null or maybe_obj_tag.?.variant != .pin) {
+                const maybe_handle = if (self.hover_handle_id == null) null else self.getHandle(self.hover_handle_id.?);
+                if (maybe_handle == null or maybe_handle.?.variant != .pin) {
                     std.log.info("cancel wire", .{});
                 } else {
-                    try self.wire(self.wire_start_pin, maybe_obj_tag.?.index);
+                    try self.wirePins(self.wire_start_pin, maybe_handle.?.obj_id);
                 }
                 self.is_wiring = false;
             }
@@ -541,52 +574,28 @@ const Logiverse = struct {
             return;
         }
         // update hover_obj
-        self.hover_obj = null;
-        const world_pos = self.cam.screenToWorld(screen_pos);
-        self.hover_pos = world_pos;
-        if (!self.bounds.containsPoint(world_pos)) {
-            return;
-        }
-        const results = try self.spatial_hash.query(self.allocator, world_pos, 50.0);
-        for (results.items) |*item| {
-            const tagId = item.point_data.data;
-            const tag = self.obj_tags.items[tagId];
-            if (tag.variant == .pin and item.distance < PIN_WORLD_RADIUS) {
-                self.hover_obj = tagId;
-                break;
-            }
-            if (tag.variant == .component) {
-                var component = self.components.items[tag.index];
-                if (component.rect.containsPoint(world_pos)) {
-                    self.hover_obj = tagId;
-                    break;
-                }
-            }
-        }
-        if (self.hover_obj != null) {
-            std.debug.print("hover: {}\n", .{self.hover_obj.?});
-        }
+        try self.updateHoverObj();
     }
 
     pub fn _update(self: *Self, dt: f32) !void {
-        const num_keys = [_]c_int{
-            raylib.KEY_ONE,
-            raylib.KEY_TWO,
-            raylib.KEY_THREE,
-            raylib.KEY_FOUR,
-            raylib.KEY_FIVE,
-            raylib.KEY_SIX,
-            raylib.KEY_SEVEN,
-            raylib.KEY_EIGHT,
-        };
-        for (num_keys, 0..) |num_key, idx| {
-            if (raylib.IsKeyPressed(num_key)) {
-                const net_id = self.csim.external_inputs.items[idx];
-                var net = self.csim.net_table.getPtr(net_id);
-                const prev = net.external_signal;
-                net.external_signal = !prev;
-            }
-        }
+        // const num_keys = [_]c_int{
+        //     raylib.KEY_ONE,
+        //     raylib.KEY_TWO,
+        //     raylib.KEY_THREE,
+        //     raylib.KEY_FOUR,
+        //     raylib.KEY_FIVE,
+        //     raylib.KEY_SIX,
+        //     raylib.KEY_SEVEN,
+        //     raylib.KEY_EIGHT,
+        // };
+        // for (num_keys, 0..) |num_key, idx| {
+        //     if (raylib.IsKeyPressed(num_key)) {
+        //         const net_id = self.csim.external_inputs.items[idx];
+        //         var net = self.csim.net_table.getPtr(net_id);
+        //         const prev = net.external_signal;
+        //         net.external_signal = !prev;
+        //     }
+        // }
 
         if (raylib.IsKeyPressed(raylib.KEY_Z)) {
             std.debug.print("\n", .{});
@@ -598,7 +607,8 @@ const Logiverse = struct {
 
     pub fn _draw(self: *Self) !void {
         // COMPONENT RECTS
-        for (self.components.items) |*comp| {
+        var compIter = self.components.iterator();
+        while (compIter.next()) |comp| {
             const topLeft = self.cam.worldToScreen(comp.rect.origin);
             const botRight = self.cam.worldToScreen(comp.rect.origin.add(comp.rect.size));
             const size = botRight.sub(topLeft);
@@ -618,7 +628,7 @@ const Logiverse = struct {
         var t: usize = 0;
         while (pinIter.next()) |pin| {
             t += 1;
-            const pin_id = pin.pin_id;
+            const pin_id = pin.id;
             const is_active = if (!pin.is_connected) false else self.csim.getValue(pin.net_id);
             const pin_tint = if (is_active) raylib.YELLOW else raylib.WHITE;
             const wire_color = if (is_active) raylib.YELLOW else raylib.GRAY;
@@ -635,7 +645,7 @@ const Logiverse = struct {
             if (pin.is_connected and net.is_input) {
                 raylib.DrawCircleV(screen_pos.toRaylibVector2(), k * 0.5, raylib.GREEN);
             }
-            if (pin_id == self.hover_obj) {
+            if (pin_id == self.hover_handle_id) {
                 raylib.DrawCircleV(screen_pos.toRaylibVector2(), k * 0.75, raylib.YELLOW);
             }
             if (pin.is_connected) raylib.DrawCircleV(screen_pos.toRaylibVector2(), k * 0.75, net_color);
@@ -660,11 +670,11 @@ const Logiverse = struct {
         for (wires_to_draw.items) |line_seg| {
             const screen_a = self.cam.worldToScreen(line_seg.a).toRaylibVector2();
             const screen_b = self.cam.worldToScreen(line_seg.b).toRaylibVector2();
-            raylib.DrawLineEx(screen_a, screen_b, 2, line_seg.color);
+            raylib.DrawLineEx(screen_a, screen_b, WIRE_WIDTH, line_seg.color);
         }
         if (self.is_wiring) {
             const start = self.cam.worldToScreen(wire_start_world_pos);
-            raylib.DrawLineEx(start.toRaylibVector2(), self.mouse_pos.toRaylibVector2(), 2, raylib.ORANGE);
+            raylib.DrawLineEx(start.toRaylibVector2(), self.mouse_pos.toRaylibVector2(), WIRE_WIDTH, raylib.ORANGE);
         }
     }
 };

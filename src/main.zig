@@ -19,7 +19,7 @@ pub const ObjectStore = @import("object_store.zig").ObjectStore;
 
 const bunnyTest = @import("bunny_test.zig").bunnyTest;
 const circuitTest = @import("circuits/circuit_simulator.zig").circuitTest;
-const initiateCircuitSandbox = @import("circuits/sandbox.zig").initiateCircuitSandbox;
+const initiateCircuitSandbox = @import("circuits/logiverse.zig").initiateCircuitSandbox;
 
 pub fn main() !void {
     std.debug.print("It's a busy day ahead!\n", .{});
@@ -210,15 +210,28 @@ test "ObjectStore works" {
 
     var iter = objs.iterator();
     var obj0 = iter.next();
-    try std.testing.expectEqual(@as(?usize, 0), obj0);
+    try std.testing.expectEqual(@as(usize, 0), obj0.?.*);
     var obj1 = iter.next();
-    try std.testing.expectEqual(@as(?usize, 1), obj1);
+    try std.testing.expectEqual(@as(usize, 1), obj1.?.*);
     var obj2 = iter.next();
-    try std.testing.expectEqual(@as(?usize, 2), obj2);
+    try std.testing.expectEqual(@as(usize, 2), obj2.?.*);
     var obj3 = iter.next();
-    try std.testing.expectEqual(@as(?usize, bob), obj3);
+    try std.testing.expectEqual(@as(usize, bob), obj3.?.*);
     var obj4 = iter.next();
-    try std.testing.expectEqual(@as(?usize, 4), obj4);
+    try std.testing.expectEqual(@as(usize, 4), obj4.?.*);
     var obj5 = iter.next();
-    try std.testing.expectEqual(@as(?usize, null), obj5);
+    try std.testing.expectEqual(@as(?*usize, null), obj5);
+}
+
+test "test enum to int" {
+    const Foods = enum {
+        apple,
+        banana,
+        orange,
+    };
+    var map = std.AutoHashMap(Foods, usize).init(std.heap.page_allocator);
+    try map.put(.apple, 1);
+    var e0 = map.get(.apple);
+    try std.testing.expectEqual(e0, @as(?usize, 1));
+    try std.testing.expectEqual(@as(usize, 1), @enumToInt(Foods.banana));
 }

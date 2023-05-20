@@ -38,6 +38,11 @@ pub fn SpatialHashCell(comptime NumT: type, comptime KeyT: type) type {
             );
         }
 
+        pub fn delete(self: *Self, key: KeyT) bool {
+            var objects = &self.objects;
+            return objects.swapRemove(key);
+        }
+
         pub fn query(
             self: *Self,
             pos: Vec2(NumT),
@@ -61,7 +66,7 @@ pub fn SpatialHashCell(comptime NumT: type, comptime KeyT: type) type {
             }
         }
 
-        pub fn removeByKey(self: *Self, key: KeyT) bool {
+        pub fn remove(self: *Self, key: KeyT) bool {
             var objects = &self.objects;
             return objects.swapRemove(key);
         }
@@ -153,6 +158,20 @@ pub fn SpatialHash(comptime NumT: type, comptime KeyT: type) type {
             try cell.insert(pos, data);
             try self.key_to_cell_index.put(data, index);
             return true;
+        }
+
+        pub fn remove(self: *Self, key: KeyT) bool {
+            var maybe_index = self.key_to_cell_index.get(key);
+            if (maybe_index == null) {
+                return false;
+            }
+            var index = maybe_index orelse unreachable;
+            var cell = &self.cells.items[index];
+            if (cell.remove(key)) {
+                _ = self.key_to_cell_index.remove(key);
+                return true;
+            }
+            unreachable;
         }
 
         pub fn move(self: *Self, key: KeyT, new_pos: Vec2(NumT)) !bool {
