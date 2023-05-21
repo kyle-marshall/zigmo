@@ -32,13 +32,14 @@ pub const Wire = struct {
 
     pub const v_table = ObjectVTable{
         .init = Self._init,
-        .spawn = Self._spawn,
-        .delete = Self._delete,
-        .render = Self._render,
+        .spawn = Self.spawn,
+        .delete = Self.delete,
+        .render = Self.render,
         .update = NoOp.update,
-        .mouse_down = NoOp.mouse_down,
-        .mouse_up = NoOp.mouse_up,
-        .mouse_move = NoOp.mouse_move,
+        .mouseDown = NoOp.mouseDown,
+        .mouseUp = NoOp.mouseUp,
+        .mouseMove = NoOp.mouseMove,
+        .debugPrint = NoOp.debugPrint,
     };
 
     pub fn init() Self {
@@ -61,7 +62,7 @@ pub const Wire = struct {
         _ = self;
     }
 
-    fn _render(handle: *ObjectHandle, frame_time: f32) !void {
+    fn render(handle: *ObjectHandle, frame_time: f32) !void {
         _ = frame_time;
         var obj = handle.getObject();
         var wire = &obj.wire;
@@ -71,7 +72,7 @@ pub const Wire = struct {
         const pos1 = handle.world.cam.worldToScreen(p1_hdl.position);
 
         var pin0 = p0_hdl.getObject().pin;
-        var net_value = handle.world.csim.getNetValue(pin0.net_id);
+        var net_value = handle.world.csim.getNetValue(pin0.csim_net_id);
         // pos0.debugPrint();
         // pos1.debugPrint();
 
@@ -80,16 +81,16 @@ pub const Wire = struct {
         raylib.DrawLineEx(pos0.toRaylibVector2(), pos1.toRaylibVector2(), WIRE_WIDTH, color);
     }
 
-    fn _spawn(handle: *ObjectHandle) !void {
+    fn spawn(handle: *ObjectHandle) !void {
         _ = handle;
     }
 
-    fn _delete(handle: *ObjectHandle) !void {
+    fn delete(handle: *ObjectHandle) !void {
         var obj = handle.getObject();
         var ex_wire = &obj.wire;
         if (ex_wire.marked_for_deletion) return;
         var first_pin_hdl = handle.mgr.getHandleByObjectId(.pin, ex_wire.p0);
-        var exiled_net_id = first_pin_hdl.getObject().pin.net_id;
+        var exiled_net_id = first_pin_hdl.getObject().pin.csim_net_id;
 
         var wire_store = handle.getStore();
 
@@ -105,7 +106,7 @@ pub const Wire = struct {
             var wire = &wire_hdl.getObject().wire;
             var p0_hdl = handle.mgr.getHandleByObjectId(.pin, wire.p0);
             var pin0 = &p0_hdl.getObject().pin;
-            var net_id = pin0.net_id;
+            var net_id = pin0.csim_net_id;
             if (net_id != exiled_net_id) continue;
             var pin1 = &handle.mgr.getHandleByObjectId(.pin, wire.p1).getObject().pin;
             pin0.is_connected = false;

@@ -30,6 +30,10 @@ pub const Gate = struct {
     // rect is relative to handle position
     color: Color,
 
+    const _dbg_print_ignore_props = [_][]const u8{
+        "owned_pins",
+    };
+
     const Self = @This();
     pub fn init(allocator: Allocator) Self {
         return Self{
@@ -42,13 +46,14 @@ pub const Gate = struct {
 
     pub const v_table = ObjectVTable{
         .init = Self._init,
-        .spawn = Self._spawn,
-        .delete = Self._delete,
-        .render = Self._render,
+        .spawn = Self.spawn,
+        .delete = Self.delete,
+        .render = Self.render,
         .update = NoOp.update,
-        .mouse_down = NoOp.mouse_down,
-        .mouse_up = NoOp.mouse_up,
-        .mouse_move = NoOp.mouse_move,
+        .mouseDown = NoOp.mouseDown,
+        .mouseUp = NoOp.mouseUp,
+        .mouseMove = NoOp.mouseMove,
+        .debugPrint = Self.debugPrint,
     };
 
     pub fn _init(handle: *ObjectHandle, allocator: Allocator) anyerror!Object {
@@ -62,7 +67,7 @@ pub const Gate = struct {
         _ = self;
     }
 
-    fn _render(handle: *ObjectHandle, frame_time: f32) !void {
+    fn render(handle: *ObjectHandle, frame_time: f32) !void {
         const origin = handle.rel_bounds.origin.add(handle.position);
         const w_rect = Rect(f32).init(origin, handle.rel_bounds.size);
         const screen_rect = handle.world.cam.worldToScreenRect(w_rect);
@@ -72,11 +77,11 @@ pub const Gate = struct {
         _ = frame_time;
     }
 
-    fn _spawn(handle: *ObjectHandle) !void {
+    fn spawn(handle: *ObjectHandle) !void {
         _ = handle;
     }
 
-    fn _delete(handle: *ObjectHandle) !void {
+    fn delete(handle: *ObjectHandle) !void {
         // delete connected pins (pin deletion will delete wires)
         const obj = handle.getObject();
         var gate = &obj.gate;
@@ -87,5 +92,11 @@ pub const Gate = struct {
         }
         // delete csim representation
         try handle.world.csim.freeGate(gate.csim_gate_id);
+    }
+
+    pub fn debugPrint(handle: *ObjectHandle) !void {
+        const obj = handle.getObject();
+        const gate = &obj.gate;
+        root.util.debugPrintObjectIgnoringFields(Self, gate, Self._dbg_print_ignore_props);
     }
 };

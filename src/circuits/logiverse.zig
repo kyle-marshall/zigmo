@@ -256,7 +256,7 @@ pub const Logiverse = struct {
             var pin = &obj.pin;
             pin.is_primary = true;
             pin.is_connected = true;
-            pin.net_id = net_id;
+            pin.csim_net_id = net_id;
         }
     }
 
@@ -299,6 +299,7 @@ pub const Logiverse = struct {
         var input_net_ids = ArrayList(NetId).init(self.allocator);
         var spawned_pin_handle_ids = ArrayList(usize).init(self.allocator);
         defer input_net_ids.deinit();
+
         for (bp.input_positions.items) |in_pos| {
             const pos = world_pos.add(in_pos);
             const net_id = try self.csim.addNet(false);
@@ -307,7 +308,7 @@ pub const Logiverse = struct {
             try spawned_pin_handle_ids.append(pin_hdl.id);
             var pin = &pin_hdl.getObject().pin;
             pin.is_connected = true;
-            pin.net_id = net_id;
+            pin.csim_net_id = net_id;
         }
 
         const output_net_id = try self.csim.addNet(false);
@@ -317,7 +318,7 @@ pub const Logiverse = struct {
         var output_pin = &output_obj.pin;
         try spawned_pin_handle_ids.append(output_handle.id);
         output_pin.is_connected = true;
-        output_pin.net_id = output_net_id;
+        output_pin.csim_net_id = output_net_id;
 
         const csim_gate_id = try self.csim.addGate(bp.simulate_fn, input_net_ids.items, output_net_id);
 
@@ -332,6 +333,13 @@ pub const Logiverse = struct {
             var pin_hdl = self.obj_mgr.getHandle(pin_hdl_id);
             pin_hdl.parent_id = wgate_hdl.id;
             try wgate.owned_pins.append(pin_hdl_id);
+            var pin = &pin_hdl.getObject().pin;
+            pin.csim_gate_id = csim_gate_id;
+            if (pin_hdl.id == output_handle.id) {
+                pin.is_gate_output = true;
+            } else {
+                pin.is_gate_input = true;
+            }
         }
     }
 
@@ -350,6 +358,38 @@ pub const Logiverse = struct {
         return false;
     }
 
+    /// when pin is rewired we need to update the csim
+    /// to link it with it's gates
+    pub fn onPinRewired(self: *Self, pin_hdl: *ObjectHandle) !void {
+        var pin = &pin_hdl.getObject().pin;
+        std.debug.print("onPinRewired: pin {}/{}\n", .{ pin_hdl.id, pin_hdl.obj_id });
+        var net = self.csim.net_table.getPtr(pin.csim_net_id);
+        if (pin.is_gate_input) {
+            // ensure net fanout includes gate id
+            for (net.fanout.items) |gate_id| {
+                if (gate_id == pin.csim_gate_id) {
+                    std.debug.print("onPinRewired: net {} fanout already includes gate {}\n", .{ pin.csim_net_id, pin.csim_gate_id });
+                    return;
+                }
+            }
+            try net.fanout.append(pin.csim_gate_id);
+            std.debug.print("onPinRewired: net {} fanout updated to {any}\n", .{ pin.csim_net_id, net.fanout.items });
+        } else if (pin.is_gate_output) {
+            var gate = self.csim.gate_table.getPtr(pin.csim_gate_id);
+            // ensure gate output is set to net id
+            if (gate.output == pin.csim_net_id) {
+                std.debug.print("onPinRewired: gate {} output already set to {}\n", .{ pin.csim_gate_id, pin.csim_net_id });
+                std.debug.print("{*}\n", .{gate});
+                gate.debugPrint();
+                return;
+            }
+            gate.output = pin.csim_net_id;
+            std.debug.print("onPinRewired: gate {} output set to {}\n", .{ pin.csim_gate_id, pin.csim_net_id });
+        } else {
+            std.debug.print("onPinRewired: pin {} is not gate input or output\n", .{pin_hdl.id});
+        }
+    }
+
     pub fn wirePins(self: *Self, p0: usize, p1: usize) !void {
         if (p0 == p1) {
             std.log.info("those are the same pins, you fool!", .{});
@@ -360,14 +400,19 @@ pub const Logiverse = struct {
             std.log.info("pins are already wired. abort!", .{});
             return;
         }
+        var pin0_hdl = self.obj_mgr.getHandleByObjectId(.pin, p0);
+        var pin1_hdl = self.obj_mgr.getHandleByObjectId(.pin, p1);
+
+        // TODO rewrite everything to use handles/handle_ids
+
         var pinStore = self.obj_mgr.getStore(.pin);
         var obj0 = pinStore.getPtr(p0);
         var pin0 = &obj0.pin;
         var obj1 = pinStore.getPtr(p1);
         var pin1 = &obj1.pin;
         const any_primary = pin0.is_primary or pin1.is_primary;
-        const n0 = pin0.net_id;
-        const n1 = pin1.net_id;
+        const n0 = pin0.csim_net_id;
+        const n1 = pin1.csim_net_id;
         if (pin0.is_connected and pin1.is_connected) {
             // merge corresponding nets (no directionality preference... yet)
             try self.csim.mergeNets(n0, n1);
@@ -377,33 +422,35 @@ pub const Logiverse = struct {
             while (pinIter.next()) |obj_id| {
                 var obj = pinStore.getPtr(obj_id);
                 var pin = &obj.pin;
-                if (pin.net_id == n1) {
+                if (pin.csim_net_id == n1) {
                     // std.debug.print("p{} -> n{}\n", .{ obj_id, n0 });
-                    pin.net_id = n0;
+                    pin.csim_net_id = n0;
                 }
-                // std.debug.print("p{} point to n{}\n", .{ obj_id, pin.net_id });
+                // std.debug.print("p{} point to n{}\n", .{ obj_id, pin.csim_net_id });
             }
         } else if (pin0.is_connected and !pin1.is_connected) {
             // pin_b joins pin_a's net
-            pin1.net_id = pin0.net_id;
+            pin1.csim_net_id = pin0.csim_net_id;
         } else if (pin1.is_connected and !pin0.is_connected) {
             // pin_a joins pin_b's net
-            pin0.net_id = pin1.net_id;
+            pin0.csim_net_id = pin1.csim_net_id;
         } else {
             // neither are connected, create a new net
             const net_id = try self.csim.addNet(false);
-            pin0.net_id = net_id;
-            pin1.net_id = net_id;
+            pin0.csim_net_id = net_id;
+            pin1.csim_net_id = net_id;
         }
         pin0.is_connected = true;
         pin1.is_connected = true;
 
-        var net = self.csim.net_table.getPtr(pin0.net_id);
+        var net = self.csim.net_table.getPtr(pin0.csim_net_id);
 
         if (any_primary) net.is_input = true;
-
         // trigger re-simulation
         if (net.is_input) net.is_undefined = true;
+
+        try self.onPinRewired(pin0_hdl);
+        try self.onPinRewired(pin1_hdl);
 
         // self.csim.printNetTable();
         // self.csim.printGateTable();
@@ -450,30 +497,10 @@ pub const Logiverse = struct {
             }
         }
         if (self.hover_handle_id != prev_hover_obj) {
-            std.debug.print("hover obj id: {?}\n", .{self.hover_handle_id});
+            std.debug.print("hover_handle_id <- {?}\n", .{self.hover_handle_id});
             if (self.hover_handle_id == null) return;
             var handle = self.obj_mgr.getHandle(self.hover_handle_id.?);
-            switch (handle.variant) {
-                .pin => {
-                    var obj = handle.getObject();
-                    var pin = &obj.pin;
-                    var net_id: ?usize = if (pin.is_connected) pin.net_id else null;
-                    std.debug.print("hover pin: {} (net {?})\n", .{ handle.obj_id, net_id });
-                },
-                .wire => {
-                    std.debug.print("hover wire: {}\n", .{handle.obj_id});
-                },
-                .gate => {
-                    var obj = handle.getObject();
-                    var gate = &obj.gate;
-                    std.debug.print("hover gate: {} {}\n", .{ handle.obj_id, gate.variant });
-                },
-                .source => {
-                    var obj = handle.getObject();
-                    var source = &obj.source;
-                    std.debug.print("hover source: {} {}\n", .{ handle.obj_id, source.variant });
-                },
-            }
+            try handle.debugPrint();
         }
     }
 
@@ -511,7 +538,7 @@ pub const Logiverse = struct {
                     std.log.info("start wiring from pin {}...\n", .{handle.obj_id});
                 },
                 else => {
-                    try handle.mouse_down(.left, self.hover_pos);
+                    try handle.mouseDown(.left, self.hover_pos);
                 },
             }
         } else if (button == .right) {
@@ -554,7 +581,7 @@ pub const Logiverse = struct {
         }
         // action depends on what type of object we're hovering over
         const handle = self.obj_mgr.getHandle(self.hover_handle_id.?);
-        try handle.mouse_up(.left, self.hover_pos);
+        try handle.mouseUp(.left, self.hover_pos);
     }
 
     pub fn _mouseMove(self: *Self, screen_pos: Vec2(f32)) !void {
@@ -585,6 +612,7 @@ pub const Logiverse = struct {
         if (raylib.IsKeyPressed(raylib.KEY_Z)) {
             std.debug.print("\n", .{});
             self.csim.printNetTable();
+            self.csim.printGateTable();
         }
         try self.csim.simulate();
     }

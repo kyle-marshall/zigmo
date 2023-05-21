@@ -27,7 +27,10 @@ const PIN_WORLD_RADIUS: f32 = 5;
 // are tied to their virtually-physical representations "pins"
 // many pins may reference the same net
 pub const Pin = struct {
-    net_id: usize,
+    csim_net_id: usize,
+    is_gate_output: bool,
+    is_gate_input: bool,
+    csim_gate_id: usize,
     /// whether or not the pin is linked to a net
     is_connected: bool,
     /// if true, net's created from or wired to this pin will have .is_input = true
@@ -36,20 +39,31 @@ pub const Pin = struct {
     comp_id: ?usize,
     tex: *Texture,
 
-    pub const v_table = ObjectVTable{
-        .init = Pin._init,
-        .spawn = Pin._spawn,
-        .delete = Pin._delete,
-        .render = Pin._render,
-        .update = NoOp.update,
-        .mouse_down = NoOp.mouse_down,
-        .mouse_up = NoOp.mouse_up,
-        .mouse_move = NoOp.mouse_move,
+    const _dbg_print_ignore_props = [_][]const u8{
+        "dependant_comps",
+        "tex",
     };
 
-    pub fn init(allocator: Allocator) Pin {
-        return Pin{
-            .net_id = 0,
+    const Self = @This();
+
+    pub const v_table = ObjectVTable{
+        .init = Self._init,
+        .spawn = Self.spawn,
+        .delete = Self.delete,
+        .render = Self.render,
+        .update = NoOp.update,
+        .mouseDown = NoOp.mouseDown,
+        .mouseUp = NoOp.mouseDown,
+        .mouseMove = NoOp.mouseMove,
+        .debugPrint = Self.debugPrint,
+    };
+
+    pub fn init(allocator: Allocator) Self {
+        return Self{
+            .csim_net_id = 0,
+            .csim_gate_id = 0,
+            .is_gate_input = false,
+            .is_gate_output = false,
             .is_connected = false,
             .is_primary = false,
             .dependant_comps = ArrayList(usize).init(allocator),
@@ -65,15 +79,15 @@ pub const Pin = struct {
         };
     }
 
-    fn _render(handle: *ObjectHandle, frame_time: f32) !void {
+    fn render(handle: *ObjectHandle, frame_time: f32) !void {
         _ = frame_time;
         var obj = handle.getObject();
         var pin = &obj.pin;
         var has_net = pin.is_connected;
-        const is_active = if (has_net) handle.world.csim.getNetValue(pin.net_id) else false;
+        const is_active = if (has_net) handle.world.csim.getNetValue(pin.csim_net_id) else false;
         const pin_tint = if (is_active) raylib.YELLOW else raylib.WHITE;
-        const net_color = try handle.world.get_net_color(pin.net_id);
-        var maybe_net = if (has_net) handle.world.csim.net_table.getPtr(pin.net_id) else null;
+        const net_color = try handle.world.get_net_color(pin.csim_net_id);
+        var maybe_net = if (has_net) handle.world.csim.net_table.getPtr(pin.csim_net_id) else null;
         const world_pos = handle.position;
         // std.debug.print("rendering pin at ({d}, {d})\n", .{ world_pos.v[0], world_pos.v[1] });
         var cam = handle.world.cam;
@@ -100,9 +114,24 @@ pub const Pin = struct {
             @constCast(root.gfx.RectTexCoords[0..]),
             pin_tint,
         );
+
+        if (has_net) {
+            var net = maybe_net.?;
+            var txtBuff: [8]u8 = undefined;
+            var written = try root.util.bufPrintNull(&txtBuff, "{d}/{d}", .{ pin.csim_net_id, net.id });
+            var x = screen_pos.v[0];
+            var y = screen_pos.v[1];
+            raylib.DrawText(
+                &written[0],
+                @floatToInt(c_int, x),
+                @floatToInt(c_int, y),
+                12,
+                raylib.PINK,
+            );
+        }
     }
 
-    fn _spawn(handle: *ObjectHandle) !void {
+    fn spawn(handle: *ObjectHandle) !void {
         std.log.info("spawning pin at: ({d}, {d})", .{ handle.position.v[0], handle.position.v[1] });
         var obj = handle.getObject();
         var pin = &obj.pin;
@@ -111,7 +140,7 @@ pub const Pin = struct {
         handle.rel_bounds = Rect(f32).init(Vec2(f32).zero.sub(r_vec), r_vec.mulScalar(2));
     }
 
-    fn _delete(handle: *ObjectHandle) !void {
+    fn delete(handle: *ObjectHandle) !void {
         var wire_store = handle.mgr.getStore(.wire);
         var still_connected = true;
         while (still_connected) {
@@ -127,5 +156,11 @@ pub const Pin = struct {
                 }
             }
         }
+    }
+
+    fn debugPrint(handle: *ObjectHandle) !void {
+        var obj = handle.getObject();
+        var pin = &obj.pin;
+        root.util.debugPrintObjectIgnoringFields(Self, pin, _dbg_print_ignore_props);
     }
 };

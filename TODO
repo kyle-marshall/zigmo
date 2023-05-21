@@ -1,3 +1,8 @@
+[ ] spawn menu / preview placement
+[ ] snap to grid
+[ ] move things around
+[ ] save/load csim/world state
+[ ] boards
 [ ] zoom around mouse position
 [x] pan via mouse drag
 [x] init camera (e.g. implement "look at")

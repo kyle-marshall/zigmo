@@ -33,19 +33,28 @@ pub const ObjectVTable = struct {
     render: *const fn (*ObjectHandle, f32) anyerror!void,
     update: *const fn (*ObjectHandle, f32) anyerror!void,
 
-    mouse_down: *const fn (*ObjectHandle, btn: MouseButton, world_pos: Vec2(f32)) anyerror!void,
-    mouse_up: *const fn (*ObjectHandle, btn: MouseButton, world_pos: Vec2(f32)) anyerror!void,
-    mouse_move: *const fn (*ObjectHandle, world_pos: Vec2(f32)) anyerror!void,
+    mouseDown: *const fn (*ObjectHandle, btn: MouseButton, world_pos: Vec2(f32)) anyerror!void,
+    mouseUp: *const fn (*ObjectHandle, btn: MouseButton, world_pos: Vec2(f32)) anyerror!void,
+    mouseMove: *const fn (*ObjectHandle, world_pos: Vec2(f32)) anyerror!void,
+
+    debugPrint: *const fn (*ObjectHandle) anyerror!void,
 };
 
 pub const ObjectManager = struct {
     allocator: Allocator,
+    handles: ObjectStore(ObjectHandle),
     stores: [NUM_VARIANTS]ObjectStore(Object),
     v_tables: [NUM_VARIANTS]ObjectVTable,
-    handles: ObjectStore(ObjectHandle),
+    /// reverse_lookup maps object ids to handle ids
     reverse_lookup: [NUM_VARIANTS]AutoHashMap(usize, usize),
     const Self = @This();
     pub fn init(allocator: Allocator) !Self {
+        var stores: [NUM_VARIANTS]ObjectStore(Object) = undefined;
+        var reverse_lookup: [NUM_VARIANTS]AutoHashMap(usize, usize) = undefined;
+        for (0..NUM_VARIANTS) |i| {
+            stores[i] = ObjectStore(Object).init(allocator);
+            reverse_lookup[i] = AutoHashMap(usize, usize).init(allocator);
+        }
         return Self{
             .allocator = allocator,
             .handles = ObjectStore(ObjectHandle).init(allocator),
@@ -55,18 +64,8 @@ pub const ObjectManager = struct {
                 Gate.v_table,
                 Source.v_table,
             },
-            .stores = [_]ObjectStore(Object){
-                ObjectStore(Object).init(allocator),
-                ObjectStore(Object).init(allocator),
-                ObjectStore(Object).init(allocator),
-                ObjectStore(Object).init(allocator),
-            },
-            .reverse_lookup = [_]AutoHashMap(usize, usize){
-                AutoHashMap(usize, usize).init(allocator),
-                AutoHashMap(usize, usize).init(allocator),
-                AutoHashMap(usize, usize).init(allocator),
-                AutoHashMap(usize, usize).init(allocator),
-            },
+            .stores = stores,
+            .reverse_lookup = reverse_lookup,
         };
     }
     pub fn deinit(self: *Self) !void {
@@ -145,14 +144,18 @@ pub const ObjectHandle = struct {
         try self.v_table.update(self, delta);
     }
 
-    pub inline fn mouse_down(self: *Self, btn: MouseButton, world_pos: Vec2(f32)) !void {
-        try self.v_table.mouse_down(self, btn, world_pos);
+    pub inline fn mouseDown(self: *Self, btn: MouseButton, world_pos: Vec2(f32)) !void {
+        try self.v_table.mouseDown(self, btn, world_pos);
     }
-    pub inline fn mouse_up(self: *Self, btn: MouseButton, world_pos: Vec2(f32)) !void {
-        try self.v_table.mouse_up(self, btn, world_pos);
+    pub inline fn mouseUp(self: *Self, btn: MouseButton, world_pos: Vec2(f32)) !void {
+        try self.v_table.mouseUp(self, btn, world_pos);
     }
-    pub inline fn mouse_move(self: *Self, world_pos: Vec2(f32)) !void {
-        try self.v_table.mouse_move(self, world_pos);
+    pub inline fn mouseMove(self: *Self, world_pos: Vec2(f32)) !void {
+        try self.v_table.mouseMove(self, world_pos);
+    }
+
+    pub inline fn debugPrint(self: *Self) !void {
+        try self.v_table.debugPrint(self);
     }
 
     pub inline fn getObject(self: *Self) *Object {
@@ -161,6 +164,7 @@ pub const ObjectHandle = struct {
     pub inline fn getStore(self: *Self) *ObjectStore(Object) {
         return self.mgr.getStore(self.variant);
     }
+
     pub inline fn containsPoint(self: *Self, world_pos: Vec2(f32)) bool {
         const d = world_pos - self.position;
         return self.rel_bounds.containsPoint(d);
@@ -175,7 +179,10 @@ pub const NoOp = struct {
         .delete = Self.delete,
         .render = Self.render,
         .update = Self.update,
-        .on_click = Self.on_click,
+        .mouseDown = Self.mouseDown,
+        .mouseUp = Self.mouseUp,
+        .mouseMove = Self.mouseMove,
+        .debugPrint = Self.debugPrint,
     };
     pub fn init(handle: *ObjectHandle, allocator: Allocator) !Object {
         _ = handle;
@@ -196,18 +203,21 @@ pub const NoOp = struct {
         _ = handle;
         _ = delta;
     }
-    pub fn mouse_down(handle: *ObjectHandle, btn: MouseButton, world_pos: Vec2(f32)) !void {
+    pub fn mouseDown(handle: *ObjectHandle, btn: MouseButton, world_pos: Vec2(f32)) !void {
         _ = handle;
         _ = btn;
         _ = world_pos;
     }
-    pub fn mouse_up(handle: *ObjectHandle, btn: MouseButton, world_pos: Vec2(f32)) !void {
+    pub fn mouseUp(handle: *ObjectHandle, btn: MouseButton, world_pos: Vec2(f32)) !void {
         _ = handle;
         _ = btn;
         _ = world_pos;
     }
-    pub fn mouse_move(handle: *ObjectHandle, world_pos: Vec2(f32)) !void {
+    pub fn mouseMove(handle: *ObjectHandle, world_pos: Vec2(f32)) !void {
         _ = handle;
         _ = world_pos;
+    }
+    pub fn debugPrint(handle: *ObjectHandle) !void {
+        _ = handle;
     }
 };

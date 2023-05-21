@@ -63,9 +63,10 @@ pub const Source = struct {
         .delete = Self.delete,
         .render = Self.render,
         .update = Self.update,
-        .mouse_down = Self.mouse_down,
-        .mouse_up = Self.mouse_up,
-        .mouse_move = NoOp.mouse_move,
+        .mouseDown = Self.mouseDown,
+        .mouseUp = Self.mouseUp,
+        .mouseMove = NoOp.mouseMove,
+        .debugPrint = NoOp.debugPrint,
     };
 
     pub fn _init(handle: *ObjectHandle, allocator: Allocator) anyerror!Object {
@@ -96,7 +97,7 @@ pub const Source = struct {
         std.debug.print("source net_id: {}\n", .{net_id});
         var pin_hdl = try handle.world.spawnObject(.pin, handle.position);
         var pin = &pin_hdl.getObject().pin;
-        pin.net_id = net_id;
+        pin.csim_net_id = net_id;
         pin.is_primary = true;
         pin.is_connected = true;
         pin_hdl.parent_id = handle.id;
@@ -123,7 +124,7 @@ pub const Source = struct {
         // check if net value still matches source value (wire/pin changes may have happened)
         var pin_hdl = handle.mgr.getHandleByObjectId(.pin, source.pin_id);
         var pin = &pin_hdl.getObject().pin;
-        var net = handle.world.csim.net_table.getPtr(pin.net_id);
+        var net = handle.world.csim.net_table.getPtr(pin.csim_net_id);
         if (net.external_signal != source.curr_value) {
             net.external_signal = source.curr_value;
         }
@@ -135,7 +136,7 @@ pub const Source = struct {
         try pin_hdl.delete();
     }
 
-    fn mouse_down(handle: *ObjectHandle, btn: MouseButton, pos: Vec2(f32)) !void {
+    fn mouseDown(handle: *ObjectHandle, btn: MouseButton, pos: Vec2(f32)) !void {
         _ = pos;
         if (btn != .left) return;
         var source = &handle.getObject().source;
@@ -152,7 +153,7 @@ pub const Source = struct {
         }
     }
 
-    fn mouse_up(handle: *ObjectHandle, btn: MouseButton, pos: Vec2(f32)) !void {
+    fn mouseUp(handle: *ObjectHandle, btn: MouseButton, pos: Vec2(f32)) !void {
         _ = pos;
         if (btn != .left) return;
         var source = &handle.getObject().source;
@@ -165,7 +166,7 @@ pub const Source = struct {
                     // update the net
                     var pin_hdl = handle.mgr.getHandleByObjectId(.pin, source.pin_id);
                     var pin = &pin_hdl.getObject().pin;
-                    const net_id = pin.net_id;
+                    const net_id = pin.csim_net_id;
                     const net = handle.world.csim.net_table.getPtr(net_id);
                     net.external_signal = source.curr_value;
                 }
