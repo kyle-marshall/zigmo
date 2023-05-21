@@ -231,6 +231,25 @@ pub const CircuitSimulator = struct {
         });
     }
 
+    /// follow net back to primary input, if any exists, and mark it as undefined
+    /// this was supposed to fix an issue after wires/pins are removed,
+    /// but that particular problem actually involved the net's external_signal changing after merge/split
+    /// TODO write tests, determine if this is needed
+    pub fn invalidateNet(self: *Self, net_id: NetId) void {
+        var net = self.net_table.getPtr(net_id);
+        if (net.is_undefined) {
+            return;
+        }
+        net.is_undefined = true;
+        for (self.gate_table.items) |*gate| {
+            if (gate.output == net_id) {
+                for (gate.inputs.items) |input_id| {
+                    self.invalidateNet(input_id);
+                }
+            }
+        }
+    }
+
     pub inline fn invalidateGate(self: *Self, gate_id: GateId) void {
         var gate = &self.gate_table.items[gate_id];
         gate.is_stale = true;
@@ -323,6 +342,7 @@ pub const CircuitSimulator = struct {
     }
 
     pub inline fn freeNet(self: *Self, net_id: NetId) !void {
+        self.invalidateNet(net_id);
         std.log.info("freeNet {}", .{net_id});
         var net = self.net_table.getPtr(net_id);
         net.fanout.deinit();
@@ -332,6 +352,8 @@ pub const CircuitSimulator = struct {
     /// net b will merge with net a (all previous references to net b will now refer to net a)
     pub fn mergeNets(self: *Self, net_a_id: NetId, net_b_id: NetId) !void {
         std.log.info("mergeNets {} <-- {}", .{ net_a_id, net_b_id });
+        self.invalidateNet(net_a_id);
+        self.invalidateNet(net_b_id);
         var net_a = self.net_table.getPtr(net_a_id);
         var net_b = self.net_table.getPtr(net_b_id);
         for (self.external_inputs.items, 0..) |input_id, idx| {

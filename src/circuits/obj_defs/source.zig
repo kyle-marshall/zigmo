@@ -59,10 +59,10 @@ pub const Source = struct {
 
     pub const v_table = ObjectVTable{
         .init = Self._init,
-        .spawn = Self._spawn,
-        .delete = Self._delete,
-        .render = Self._render,
-        .update = NoOp.update,
+        .spawn = Self.spawn,
+        .delete = Self.delete,
+        .render = Self.render,
+        .update = Self.update,
         .mouse_down = Self.mouse_down,
         .mouse_up = Self.mouse_up,
         .mouse_move = NoOp.mouse_move,
@@ -79,7 +79,7 @@ pub const Source = struct {
         _ = self;
     }
 
-    fn _render(handle: *ObjectHandle, frame_time: f32) !void {
+    fn render(handle: *ObjectHandle, frame_time: f32) !void {
         const world_top_left = handle.position.add(handle.rel_bounds.origin);
         const world_bot_right = world_top_left.add(handle.rel_bounds.size);
         const screen_top_left = handle.world.cam.worldToScreen(world_top_left);
@@ -92,7 +92,7 @@ pub const Source = struct {
         _ = frame_time;
     }
 
-    fn _spawn(handle: *ObjectHandle) !void {
+    fn spawn(handle: *ObjectHandle) !void {
         var source = &handle.getObject().source;
         const net_id = try handle.world.csim.addNet(true);
         std.debug.print("source net_id: {}\n", .{net_id});
@@ -107,7 +107,31 @@ pub const Source = struct {
         handle.rel_bounds = Rect(f32).init(Vec2(f32).zero.sub(r_vec), r_vec.mulScalar(2));
     }
 
-    fn _delete(handle: *ObjectHandle) !void {
+    fn update(handle: *ObjectHandle, frame_time: f32) !void {
+        var source = &handle.getObject().source;
+        switch (source.variant) {
+            .toggle => {
+                // nothing to do
+            },
+            .button => {
+                unreachable;
+            },
+            .clock => {
+                unreachable;
+            },
+        }
+        _ = frame_time;
+
+        // check if net value still matches source value (wire/pin changes may have happened)
+        var pin_hdl = handle.mgr.getHandleByObjectId(.pin, source.pin_id);
+        var pin = &pin_hdl.getObject().pin;
+        var net = handle.world.csim.net_table.getPtr(pin.net_id);
+        if (net.external_signal != source.curr_value) {
+            net.external_signal = source.curr_value;
+        }
+    }
+
+    fn delete(handle: *ObjectHandle) !void {
         var source = &handle.getObject().source;
         var pin_hdl = handle.mgr.getHandleByObjectId(.pin, source.pin_id);
         try pin_hdl.delete();

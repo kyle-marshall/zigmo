@@ -95,6 +95,7 @@ const CompId = usize;
 const BlueprintId = usize;
 const GateBlueprint = struct {
     id: BlueprintId,
+    variant: GateVariant,
     rect: Rect(f32),
     color: Color,
     input_positions: ArrayList(Vec2(f32)),
@@ -127,10 +128,11 @@ const BlueprintFactory = struct {
         var origin = rect_size.mulScalar(-0.5);
         var blueprint = GateBlueprint{
             .id = 0,
+            .variant = variant,
             .rect = Rect(f32).init(origin, Vec2(f32).init(30, h)),
             .input_positions = ArrayList(Vec2(f32)).init(allocator),
             .output_position = Vec2(f32).init(10, 0),
-            .color = raylib.LIGHTGRAY,
+            .color = Self.gateVariantToColor(variant),
             .simulate_fn = GateFactory.getSimulateFn(variant),
         };
         const step: f32 = h / @intToFloat(f32, num_inputs + 1);
@@ -305,6 +307,7 @@ pub const Logiverse = struct {
 
         var gate_hdl = try self.spawnObject(.gate, world_pos);
         var wgate = &gate_hdl.getObject().gate;
+        wgate.variant = bp.variant;
         wgate.csim_gate_id = csim_gate_id;
         wgate.color = bp.color;
 
@@ -572,31 +575,22 @@ pub const Logiverse = struct {
         try self.updateHoverObj();
     }
 
+    pub fn updateAllObjectsOfVariant(self: *Self, variant: ObjectVariant, frame_time: f32) !void {
+        var store = self.obj_mgr.getStore(variant);
+        var iter = store.idIterator();
+        while (iter.next()) |obj_id| {
+            var handle = self.obj_mgr.getHandleByObjectId(variant, obj_id);
+            try handle.update(frame_time);
+        }
+    }
+
     pub fn _update(self: *Self, dt: f32) !void {
-        // const num_keys = [_]c_int{
-        //     raylib.KEY_ONE,
-        //     raylib.KEY_TWO,
-        //     raylib.KEY_THREE,
-        //     raylib.KEY_FOUR,
-        //     raylib.KEY_FIVE,
-        //     raylib.KEY_SIX,
-        //     raylib.KEY_SEVEN,
-        //     raylib.KEY_EIGHT,
-        // };
-        // for (num_keys, 0..) |num_key, idx| {
-        //     if (raylib.IsKeyPressed(num_key)) {
-        //         const net_id = self.csim.external_inputs.items[idx];
-        //         var net = self.csim.net_table.getPtr(net_id);
-        //         const prev = net.external_signal;
-        //         net.external_signal = !prev;
-        //     }
-        // }
+        try self.updateAllObjectsOfVariant(.source, dt);
 
         if (raylib.IsKeyPressed(raylib.KEY_Z)) {
             std.debug.print("\n", .{});
             self.csim.printNetTable();
         }
-        _ = dt;
         try self.csim.simulate();
     }
 
@@ -623,74 +617,6 @@ pub const Logiverse = struct {
             const start = self.cam.worldToScreen(start_pin_handle.position);
             raylib.DrawLineEx(start.toRaylibVector2(), self.mouse_pos.toRaylibVector2(), wire_mod.WIRE_WIDTH, raylib.ORANGE);
         }
-
-        // // COMPONENT RECTS
-        // var compIter = self.components.iterator();
-        // while (compIter.next()) |comp| {
-        //     const topLeft = self.cam.worldToScreen(comp.rect.origin);
-        //     const botRight = self.cam.worldToScreen(comp.rect.origin.add(comp.rect.size));
-        //     const size = botRight.sub(topLeft);
-        //     raylib.DrawRectangleV(topLeft.toRaylibVector2(), size.toRaylibVector2(), comp.color);
-        // }
-        // // PINS
-        // var k = self.cam.curr_scale * PIN_WORLD_RADIUS * 2;
-        // var screen_points: [5]Vec2(f32) = undefined;
-        // var pin_tex = try self.resource_manager.getTexture(PIN_TEX_PATH);
-        // var wire_start_world_pos = Vec2(f32).zero;
-        // inline for (0..5) |c_i| {
-        //     screen_points[c_i] = RectTexCoords[c_i].subScalar(0.5).mulScalar(k);
-        // }
-        // var wires_to_draw = ArrayList(ColoredLineSegment).init(self.allocator);
-        // defer wires_to_draw.deinit();
-        // var pinIter = self.pins.iterator();
-        // var t: usize = 0;
-        // while (pinIter.next()) |pin| {
-        //     t += 1;
-        //     const pin_id = pin.id;
-        //     const is_active = if (!pin.is_connected) false else self.csim.getValue(pin.net_id);
-        //     const pin_tint = if (is_active) raylib.YELLOW else raylib.WHITE;
-        //     const wire_color = if (is_active) raylib.YELLOW else raylib.GRAY;
-        //     const net_color = try self.get_net_color(pin.net_id);
-        //     var net = self.csim.net_table.getPtr(pin.net_id);
-        //     const world_pos = pin.position;
-        //     if (pin_id == self.wire_start_pin) {
-        //         wire_start_world_pos = world_pos;
-        //     }
-        //     if (!self.cam.visible_rect.containsPoint(world_pos)) {
-        //         continue;
-        //     }
-        //     const screen_pos = self.cam.worldToScreen(world_pos);
-        //     if (pin.is_connected and net.is_input) {
-        //         raylib.DrawCircleV(screen_pos.toRaylibVector2(), k * 0.5, raylib.GREEN);
-        //     }
-        //     if (pin_id == self.hover_handle_id) {
-        //         raylib.DrawCircleV(screen_pos.toRaylibVector2(), k * 0.75, raylib.YELLOW);
-        //     }
-        //     if (pin.is_connected) raylib.DrawCircleV(screen_pos.toRaylibVector2(), k * 0.75, net_color);
-        //     gfx.drawTexturePoly(
-        //         pin_tex,
-        //         screen_pos,
-        //         screen_points[0..],
-        //         @constCast(RectTexCoords[0..]),
-        //         pin_tint,
-        //     );
-        //     for (pin.adj_pins.items) |adj_pin_id| {
-        //         if (adj_pin_id > pin_id) {
-        //             const other_pin = self.pins.getPtr(adj_pin_id);
-        //             try wires_to_draw.append(ColoredLineSegment{
-        //                 .a = world_pos,
-        //                 .b = other_pin.position,
-        //                 .color = wire_color,
-        //             });
-        //         }
-        //     }
-        // }
-        // for (wires_to_draw.items) |line_seg| {
-        //     const screen_a = self.cam.worldToScreen(line_seg.a).toRaylibVector2();
-        //     const screen_b = self.cam.worldToScreen(line_seg.b).toRaylibVector2();
-        //     raylib.DrawLineEx(screen_a, screen_b, WIRE_WIDTH, line_seg.color);
-        // }
-
     }
 };
 
@@ -716,7 +642,7 @@ pub fn initiateCircuitSandbox() !void {
     );
     defer world.deinit();
     try world.load_textures();
-    try world.init_test_pins();
+    // try world.init_test_pins();
 
     var cam = &(world.cam);
     cam.centerOnInstant(Vec2(f32).init(200, 150));
