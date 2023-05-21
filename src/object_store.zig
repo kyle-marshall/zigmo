@@ -31,6 +31,32 @@ fn ObjectStoreIterator(comptime T: type) type {
     };
 }
 
+fn ObjectStoreIdIterator(comptime T: type) type {
+    return struct {
+        store: *ObjectStore(T),
+        index: usize,
+        mask: []bool,
+        const Self = @This();
+        pub fn init(store: *ObjectStore(T)) Self {
+            return Self{
+                .store = store,
+                .index = 0,
+                .mask = store.mask.items,
+            };
+        }
+        pub fn next(self: *ObjectStoreIdIterator(T)) ?usize {
+            const M = self.mask;
+            while (true) {
+                var i = self.index;
+                self.index += 1;
+                if (i >= M.len) return null;
+                if (M[i]) return i;
+            }
+            unreachable;
+        }
+    };
+}
+
 pub fn ObjectStore(comptime T: type) type {
     return struct {
         const Self = @This();
@@ -81,6 +107,10 @@ pub fn ObjectStore(comptime T: type) type {
 
         pub fn iterator(self: *Self) ObjectStoreIterator(T) {
             return ObjectStoreIterator(T).init(self);
+        }
+
+        pub fn idIterator(self: *Self) ObjectStoreIdIterator(T) {
+            return ObjectStoreIdIterator(T).init(self);
         }
     };
 }

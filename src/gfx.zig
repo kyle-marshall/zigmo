@@ -21,3 +21,11 @@ pub fn drawTexturePoly(texture: raylib.Texture2D, center: Vec2(f32), points: []V
     rlgl.rlEnd();
     rlgl.rlSetTexture(0);
 }
+
+pub const RectTexCoords = [5]Vec2(f32){
+    Vec2(f32).init(0, 0),
+    Vec2(f32).init(0, 1),
+    Vec2(f32).init(1, 1),
+    Vec2(f32).init(1, 0),
+    Vec2(f32).init(0, 0),
+};

@@ -56,6 +56,16 @@ pub const GateTableEntry = struct {
     }
 };
 
+pub const GateVariant = enum {
+    AND,
+    OR,
+    NOT,
+    XOR,
+    NAND,
+    NOR,
+    XNOR,
+};
+
 pub const GateFactory = struct {
     const Self = @This();
     pub fn AND(csim: *CircuitSimulator, gate_ptr: *GateTableEntry) LogicValue {
@@ -99,11 +109,27 @@ pub const GateFactory = struct {
     }
 
     pub fn NAND(csim: *CircuitSimulator, gate_ptr: *GateTableEntry) LogicValue {
-        return !Self.And(csim, gate_ptr);
+        return !Self.AND(csim, gate_ptr);
     }
 
     pub fn NOR(csim: *CircuitSimulator, gate_ptr: *GateTableEntry) LogicValue {
         return !Self.OR(csim, gate_ptr);
+    }
+
+    pub fn XNOR(csim: *CircuitSimulator, gate_ptr: *GateTableEntry) LogicValue {
+        return !Self.XOR(csim, gate_ptr);
+    }
+
+    pub fn getSimulateFn(comptime variant: GateVariant) SimulateGateFn {
+        return switch (variant) {
+            .AND => Self.AND,
+            .OR => Self.OR,
+            .NOT => Self.NOT,
+            .XOR => Self.XOR,
+            .NAND => Self.NAND,
+            .NOR => Self.NOR,
+            .XNOR => Self.XNOR,
+        };
     }
 
     pub fn createGate(allocator: Allocator, id: GateId, simulate: SimulateGateFn) GateTableEntry {

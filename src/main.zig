@@ -235,3 +235,39 @@ test "test enum to int" {
     try std.testing.expectEqual(e0, @as(?usize, 1));
     try std.testing.expectEqual(@as(usize, 1), @enumToInt(Foods.banana));
 }
+
+test "test union of structs" {
+    const Cow = packed struct {
+        id: usize,
+        age: usize,
+    };
+    const Karen = packed struct {
+        id: usize,
+        complaint_count: u32,
+        anger_level: f32,
+
+        const Self = @This();
+        pub fn complain(self: *Self) void {
+            self.complaint_count += 1;
+            self.anger_level -= 0.25;
+        }
+    };
+    const CowOrKaren = union {
+        cow: Cow,
+        karen: Karen,
+    };
+    var obj0: CowOrKaren = .{ .cow = .{ .id = 69, .age = 420 } };
+    var obj1: CowOrKaren = .{ .karen = .{ .id = 1, .complaint_count = 9900, .anger_level = 9134.25 } };
+
+    var cow = obj0.cow;
+    try std.testing.expectEqual(@as(usize, 69), cow.id);
+    var notKaren = &obj0.karen;
+    notKaren.id = 99;
+    try std.testing.expectEqual(@as(usize, 99), cow.id);
+
+    var karen = &obj1.karen;
+    try std.testing.expectEqual(@as(u32, 9900), karen.complaint_count);
+    karen.complain();
+    try std.testing.expectEqual(@as(u32, 9901), karen.complaint_count);
+    try std.testing.expectEqual(@as(f32, 9134), karen.anger_level);
+}
