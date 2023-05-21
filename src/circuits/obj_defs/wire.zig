@@ -71,7 +71,7 @@ pub const Wire = struct {
         const pos1 = handle.world.cam.worldToScreen(p1_hdl.position);
 
         var pin0 = p0_hdl.getObject().pin;
-        var net_value = handle.world.csim.getValue(pin0.net_id);
+        var net_value = handle.world.csim.getNetValue(pin0.net_id);
         // pos0.debugPrint();
         // pos1.debugPrint();
 

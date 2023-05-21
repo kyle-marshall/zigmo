@@ -81,7 +81,10 @@ pub const ObjectManager = struct {
         return self.handles.getPtr(handle_id);
     }
     pub inline fn getHandleByObjectId(self: *Self, variant: ObjectVariant, obj_id: usize) *ObjectHandle {
-        var h_id = self.reverse_lookup[@enumToInt(variant)].get(obj_id) orelse unreachable;
+        var h_id = self.reverse_lookup[@enumToInt(variant)].get(obj_id) orelse {
+            std.debug.panic("ObjectManager.getHandleByObjectId: no handle found for object id {} {d}\n", .{ variant, obj_id });
+            unreachable;
+        };
         return self.getHandle(h_id);
     }
     pub fn createHandle(self: *Self, variant: ObjectVariant) !*ObjectHandle {
@@ -133,7 +136,7 @@ pub const ObjectHandle = struct {
         try self.v_table.delete(self);
         try self.mgr.getStore(self.variant).remove(self.obj_id);
         try self.mgr.handles.remove(self.id);
-        // std.debug.print("DELETE END {d} ({?} {d})\n", .{ self.id, self.variant, self.obj_id });
+        std.debug.print("deleted {d} ({?} {d})\n", .{ self.id, self.variant, self.obj_id });
     }
     pub inline fn render(self: *Self, delta: f32) !void {
         try self.v_table.render(self, delta);

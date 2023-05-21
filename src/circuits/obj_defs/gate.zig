@@ -25,6 +25,7 @@ pub const Gate = struct {
     csim_gate_id: usize,
     variant: GateVariant,
     /// owned pins will move with the component when it is moved
+    /// these are HANDLE ids
     owned_pins: ArrayList(usize),
     // rect is relative to handle position
     color: Color,
@@ -82,8 +83,11 @@ pub const Gate = struct {
         const obj = handle.getObject();
         var gate = &obj.gate;
         for (gate.owned_pins.items) |pin_id| {
-            const pin_hdl = handle.mgr.getHandleByObjectId(.pin, pin_id);
+            std.debug.print("Gate.delete deleting pin {}\n", .{pin_id});
+            const pin_hdl = handle.mgr.getHandle(pin_id);
             try pin_hdl.delete();
         }
+        // delete csim representation
+        try handle.world.csim.freeGate(gate.csim_gate_id);
     }
 };

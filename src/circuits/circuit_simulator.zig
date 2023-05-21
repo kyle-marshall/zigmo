@@ -32,13 +32,6 @@ pub const NetTableEntry = struct {
     }
 };
 
-pub const ObjectVariant = enum { pin, component };
-
-pub const ObjectTag = struct {
-    variant: ObjectVariant,
-    index: usize,
-};
-
 pub const SimulateGateFn = *const fn (simulator: *CircuitSimulator, gate_ptr: *GateTableEntry) LogicValue;
 pub const GateTableEntry = struct {
     id: GateId,
@@ -73,7 +66,7 @@ pub const GateFactory = struct {
             return false;
         }
         for (gate_ptr.inputs.items) |net_id| {
-            if (!csim.getValue(net_id)) {
+            if (!csim.getNetValue(net_id)) {
                 return false;
             }
         }
@@ -85,7 +78,7 @@ pub const GateFactory = struct {
             return false;
         }
         for (gate_ptr.inputs.items) |net_id| {
-            if (csim.getValue(net_id)) {
+            if (csim.getNetValue(net_id)) {
                 return true;
             }
         }
@@ -96,8 +89,8 @@ pub const GateFactory = struct {
         if (gate_ptr.inputs.items.len != 2) {
             return false;
         }
-        const a = csim.getValue(gate_ptr.inputs.items[0]);
-        const b = csim.getValue(gate_ptr.inputs.items[1]);
+        const a = csim.getNetValue(gate_ptr.inputs.items[0]);
+        const b = csim.getNetValue(gate_ptr.inputs.items[1]);
         return (a != b);
     }
 
@@ -105,7 +98,7 @@ pub const GateFactory = struct {
         if (gate_ptr.inputs.items.len != 1) {
             return false;
         }
-        return !csim.getValue(gate_ptr.inputs.items[0]);
+        return !csim.getNetValue(gate_ptr.inputs.items[0]);
     }
 
     pub fn NAND(csim: *CircuitSimulator, gate_ptr: *GateTableEntry) LogicValue {
@@ -153,7 +146,7 @@ pub const CircuitSimulator = struct {
 
     // circuit fun
     net_table: ObjectStore(NetTableEntry),
-    gate_table: ArrayList(GateTableEntry),
+    gate_table: ObjectStore(GateTableEntry),
     event_queue: ArrayList(CircuitSimulatorEvent),
     gate_queue: ArrayList(GateId),
     external_inputs: ArrayList(NetId),
@@ -168,7 +161,7 @@ pub const CircuitSimulator = struct {
         var obj = Self{
             .allocator = allocator,
             .net_table = ObjectStore(NetTableEntry).init(allocator),
-            .gate_table = ArrayList(GateTableEntry).init(allocator),
+            .gate_table = ObjectStore(GateTableEntry).init(allocator),
             .event_queue = ArrayList(CircuitSimulatorEvent).init(allocator),
             .gate_queue = ArrayList(GateId).init(allocator),
             .external_inputs = ArrayList(NetId).init(allocator),
@@ -198,7 +191,7 @@ pub const CircuitSimulator = struct {
         }
     }
 
-    pub inline fn getValue(self: *Self, net_id: NetId) LogicValue {
+    pub inline fn getNetValue(self: *Self, net_id: NetId) LogicValue {
         return self.net_table.getPtr(net_id).value;
     }
 
@@ -207,6 +200,79 @@ pub const CircuitSimulator = struct {
         net.value = value;
         net.is_undefined = false;
         std.log.info("updated net {} to {}", .{ net_id, value });
+    }
+
+    pub fn addNet(self: *Self, is_external_input: bool) !NetId {
+        const id = try self.net_table.store(NetTableEntry{
+            .id = undefined,
+            .value = false,
+            .external_signal = false,
+            .fanout = ArrayList(GateId).init(self.allocator),
+            .is_undefined = true,
+            .is_input = is_external_input,
+        });
+        var net = self.net_table.getPtr(id);
+        net.id = id;
+        if (is_external_input) {
+            try self.external_inputs.append(id);
+        }
+        std.log.info("initialized net {d} (is_external_input = {})", .{ id, is_external_input });
+        return id;
+    }
+
+    /// follow net back to primary input, if any exists, and mark it as undefined
+    /// this was supposed to fix an issue after wires/pins are removed,
+    /// but that particular problem actually involved the net's external_signal changing after merge/split
+    /// TODO write tests, determine if this is needed
+    pub fn invalidateNet(self: *Self, net_id: NetId) void {
+        var net = self.net_table.getPtr(net_id);
+        if (net.is_undefined) {
+            return;
+        }
+        net.is_undefined = true;
+        var gate_iter = self.gate_table.iterator();
+        while (gate_iter.next()) |gate| {
+            if (gate.output == net_id) {
+                for (gate.inputs.items) |input_id| {
+                    self.invalidateNet(input_id);
+                }
+            }
+        }
+    }
+
+    pub fn addGate(self: *Self, sim_fn: SimulateGateFn, inputs: []NetId, output: NetId) !GateId {
+        const id = try self.gate_table.store(GateTableEntry{
+            .id = undefined,
+            .simulate = sim_fn,
+            .inputs = ArrayList(NetId).init(self.allocator),
+            .output = output,
+            .is_stale = true,
+        });
+        var gate = self.gate_table.getPtr(id);
+        gate.id = id;
+        for (inputs) |input_id| {
+            try gate.inputs.append(input_id);
+            var input_net = self.net_table.getPtr(input_id);
+            try input_net.fanout.append(id);
+        }
+        std.log.info("initialized gate {d} (inputs = {any}, output = {d})", .{ id, inputs, output });
+        return id;
+    }
+
+    pub fn invalidateGate(self: *Self, gate_id: GateId) void {
+        var gate = self.gate_table.getPtr(gate_id);
+        gate.is_stale = true;
+    }
+
+    pub fn simulate(self: *Self) !void {
+        try self.readInputs();
+        while (self.event_queue.items.len > 0) {
+            try self.processEvents();
+            self.flushIntermediateOutput();
+            if (self.gate_queue.items.len > 0) {
+                try self.processGates();
+            }
+        }
     }
 
     pub fn readInputs(self: *Self) !void {
@@ -231,41 +297,6 @@ pub const CircuitSimulator = struct {
         });
     }
 
-    /// follow net back to primary input, if any exists, and mark it as undefined
-    /// this was supposed to fix an issue after wires/pins are removed,
-    /// but that particular problem actually involved the net's external_signal changing after merge/split
-    /// TODO write tests, determine if this is needed
-    pub fn invalidateNet(self: *Self, net_id: NetId) void {
-        var net = self.net_table.getPtr(net_id);
-        if (net.is_undefined) {
-            return;
-        }
-        net.is_undefined = true;
-        for (self.gate_table.items) |*gate| {
-            if (gate.output == net_id) {
-                for (gate.inputs.items) |input_id| {
-                    self.invalidateNet(input_id);
-                }
-            }
-        }
-    }
-
-    pub inline fn invalidateGate(self: *Self, gate_id: GateId) void {
-        var gate = &self.gate_table.items[gate_id];
-        gate.is_stale = true;
-    }
-
-    pub fn simulate(self: *Self) !void {
-        try self.readInputs();
-        while (self.event_queue.items.len > 0) {
-            try self.processEvents();
-            self.flushIntermediateOutput();
-            if (self.gate_queue.items.len > 0) {
-                try self.processGates();
-            }
-        }
-    }
-
     pub fn processEvents(self: *Self) !void {
         for (self.event_queue.items) |*event| {
             for (self.getFanout(event.net_id).items) |gate_id| {
@@ -281,24 +312,19 @@ pub const CircuitSimulator = struct {
         return net.fanout;
     }
 
-    pub inline fn simulateGate(self: *Self, gate_id: GateId) LogicValue {
-        var gate = &self.gate_table.items[gate_id];
-        return gate.simulate(self, gate);
-    }
-
     /// Simulate all gates in the gate queue.
     /// If gate simulation leads to output change, queue an event.
     pub fn processGates(self: *Self) !void {
         for (self.gate_queue.items) |gate_id| {
-            const out_value = self.simulateGate(gate_id);
-            const inputs = self.gate_table.items[gate_id].inputs.items;
-            std.debug.print("gate {} ({any}) -> {}\n", .{ gate_id, inputs, out_value });
-            var gate = &self.gate_table.items[gate_id];
+            var gate = self.gate_table.getPtr(gate_id);
+
             // is_stale was added because gates MAY be added multiple times during processEvents
             // due do me skipping the pseudocode lookup of whether gate is already in queue
             if (!gate.is_stale) continue;
+
             gate.is_stale = false;
-            const currValue = self.getValue(gate.output);
+            const out_value = gate.simulate(self, gate);
+            const currValue = self.getNetValue(gate.output);
             if (out_value != currValue) {
                 try self.createEvent(gate.output, out_value);
             }
@@ -314,39 +340,19 @@ pub const CircuitSimulator = struct {
         self.event_queue.clearRetainingCapacity();
     }
 
-    pub fn addNet(self: *Self, is_external_input: bool) !NetId {
-        const id = try self.net_table.store(NetTableEntry{
-            .id = undefined,
-            .value = false,
-            .external_signal = false,
-            .fanout = ArrayList(GateId).init(self.allocator),
-            .is_undefined = true,
-            .is_input = is_external_input,
-        });
-        var net = self.net_table.getPtr(id);
-        net.id = id;
-        if (is_external_input) {
-            try self.external_inputs.append(id);
-        }
-        std.log.info("initialized net {d} (is_external_input = {})", .{ id, is_external_input });
-        return id;
-    }
-
-    pub fn createObjectTag(self: *Self, variant: ObjectVariant, index: usize) !usize {
-        const tag_index = self.obj_tags.items.len;
-        try self.obj_tags.append(ObjectTag{
-            .variant = variant,
-            .index = index,
-        });
-        return tag_index;
-    }
-
-    pub inline fn freeNet(self: *Self, net_id: NetId) !void {
+    pub fn freeNet(self: *Self, net_id: NetId) !void {
         self.invalidateNet(net_id);
         std.log.info("freeNet {}", .{net_id});
         var net = self.net_table.getPtr(net_id);
         net.fanout.deinit();
         try self.net_table.remove(net_id);
+    }
+
+    pub fn freeGate(self: *Self, gate_id: GateId) !void {
+        std.log.info("freeGate {}", .{gate_id});
+        var gate = self.gate_table.getPtr(gate_id);
+        gate.inputs.deinit();
+        try self.gate_table.remove(gate_id);
     }
 
     /// net b will merge with net a (all previous references to net b will now refer to net a)
@@ -362,7 +368,8 @@ pub const CircuitSimulator = struct {
                 net_a.is_input = true;
             }
         }
-        for (self.gate_table.items) |*gate| {
+        var gate_iter = self.gate_table.iterator();
+        while (gate_iter.next()) |gate| {
             if (gate.output == net_b_id) {
                 gate.output = net_a_id;
             }

@@ -296,48 +296,43 @@ pub const Logiverse = struct {
     }
 
     pub fn spawnGate(self: *Self, bp: *GateBlueprint, world_pos: Vec2(f32)) !void {
-        const csim_gate_id = self.csim.gate_table.items.len;
-        try self.csim.gate_table.append(GateTableEntry{
-            .id = csim_gate_id,
-            .inputs = ArrayList(NetId).init(self.allocator),
-            .is_stale = true,
-            .output = 0,
-            .simulate = bp.simulate_fn,
-        });
+        var input_net_ids = ArrayList(NetId).init(self.allocator);
+        var spawned_pin_handle_ids = ArrayList(usize).init(self.allocator);
+        defer input_net_ids.deinit();
+        for (bp.input_positions.items) |in_pos| {
+            const pos = world_pos.add(in_pos);
+            const net_id = try self.csim.addNet(false);
+            try input_net_ids.append(net_id);
+            const pin_hdl = try self.spawnObject(.pin, pos);
+            try spawned_pin_handle_ids.append(pin_hdl.id);
+            var pin = &pin_hdl.getObject().pin;
+            pin.is_connected = true;
+            pin.net_id = net_id;
+        }
 
-        var gate_hdl = try self.spawnObject(.gate, world_pos);
-        var wgate = &gate_hdl.getObject().gate;
+        const output_net_id = try self.csim.addNet(false);
+        const output_pos = world_pos.add(bp.output_position);
+        const output_handle = try self.spawnObject(.pin, output_pos);
+        var output_obj = output_handle.getObject();
+        var output_pin = &output_obj.pin;
+        try spawned_pin_handle_ids.append(output_handle.id);
+        output_pin.is_connected = true;
+        output_pin.net_id = output_net_id;
+
+        const csim_gate_id = try self.csim.addGate(bp.simulate_fn, input_net_ids.items, output_net_id);
+
+        var wgate_hdl = try self.spawnObject(.gate, world_pos);
+        var wgate = &wgate_hdl.getObject().gate;
         wgate.variant = bp.variant;
         wgate.csim_gate_id = csim_gate_id;
         wgate.color = bp.color;
+        wgate_hdl.rel_bounds = bp.rect;
 
-        gate_hdl.rel_bounds = bp.rect;
-
-        var csim_gate = &self.csim.gate_table.items[csim_gate_id];
-
-        for (bp.input_positions.items) |in_pos| {
-            const pos = world_pos.add(in_pos);
-            const handle = try self.spawnObject(.pin, pos);
-            const pin_id = handle.obj_id;
-            try wgate.owned_pins.append(pin_id);
-            var pin = &handle.getObject().pin;
-            const net_id = try self.csim.addNet(false);
-            pin.net_id = net_id;
-            pin.is_connected = true;
-            handle.parent_id = gate_hdl.id;
-            var net = self.csim.net_table.getPtr(net_id);
-            try net.fanout.append(csim_gate_id);
-            try csim_gate.inputs.append(pin.net_id);
+        for (spawned_pin_handle_ids.items) |pin_hdl_id| {
+            var pin_hdl = self.obj_mgr.getHandle(pin_hdl_id);
+            pin_hdl.parent_id = wgate_hdl.id;
+            try wgate.owned_pins.append(pin_hdl_id);
         }
-
-        const out_net_id = try self.csim.addNet(false);
-        const out_pin_hdl = try self.spawnObject(.pin, world_pos.add(bp.output_position));
-        out_pin_hdl.parent_id = gate_hdl.id;
-        var out_pin = &out_pin_hdl.getObject().pin;
-        out_pin.net_id = out_net_id;
-        out_pin.is_connected = true;
-        csim_gate.output = out_pin.net_id;
-        try wgate.owned_pins.append(out_pin_hdl.obj_id);
     }
 
     pub inline fn check_pin_adjacency(self: *Self, p0: usize, p1: usize) bool {
