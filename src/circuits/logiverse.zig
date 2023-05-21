@@ -727,10 +727,8 @@ pub fn initiateCircuitSandbox() !void {
             // GRID LINES
             if (draw_grid_lines) {
                 var grid_size = world.bounds.size.div(Vec2(f32).init(grid_div, grid_div));
-                var origin = cam.worldToScreen(world.bounds.origin);
-                var maxPoint = cam.worldToScreen(origin.add(world.bounds.size));
-                var screenSize = maxPoint.sub(origin);
-                raylib.DrawRectangleV(origin.toRaylibVector2(), screenSize.toRaylibVector2(), GRID_BG_COLOR);
+                const screen_rect = world.cam.worldToScreenRect(world.bounds);
+                raylib.DrawRectangleV(screen_rect.origin.toRaylibVector2(), screen_rect.size.toRaylibVector2(), GRID_BG_COLOR);
                 var world_x: f32 = 0;
                 var c: u32 = 0;
                 while (world_x <= world.bounds.size.v[0]) : ({

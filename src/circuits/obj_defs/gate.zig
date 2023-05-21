@@ -63,14 +63,12 @@ pub const Gate = struct {
     }
 
     fn _render(handle: *ObjectHandle, frame_time: f32) !void {
-        const world_top_left = handle.position.add(handle.rel_bounds.origin);
-        const world_bot_right = world_top_left.add(handle.rel_bounds.size);
-        const screen_top_left = handle.world.cam.worldToScreen(world_top_left);
-        const screen_bot_right = handle.world.cam.worldToScreen(world_bot_right);
-        const screen_size = screen_bot_right.sub(screen_top_left);
+        const origin = handle.rel_bounds.origin.add(handle.position);
+        const w_rect = Rect(f32).init(origin, handle.rel_bounds.size);
+        const screen_rect = handle.world.cam.worldToScreenRect(w_rect);
         const obj = handle.getObject();
         var gate = &obj.gate;
-        raylib.DrawRectangleV(screen_top_left.toRaylibVector2(), screen_size.toRaylibVector2(), gate.color);
+        raylib.DrawRectangleV(screen_rect.origin.toRaylibVector2(), screen_rect.size.toRaylibVector2(), gate.color);
         _ = frame_time;
     }
 
