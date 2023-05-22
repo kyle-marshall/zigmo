@@ -121,7 +121,7 @@ pub fn SpatialHash(comptime NumT: type, comptime KeyT: type) type {
                     @intToFloat(NumT, cell_coord.v[0]),
                     @intToFloat(NumT, cell_coord.v[1]) * cell_side_len,
                 );
-                _ = origin.scaleInPlace(cell_side_len);
+                _ = origin.mulScalarInPlace(cell_side_len);
                 const cell_bounds = Rect(NumT).init(origin, size);
                 try s.cells.append(CellT.init(allocator, cell_bounds));
             }

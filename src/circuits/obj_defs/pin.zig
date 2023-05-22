@@ -21,7 +21,7 @@ const ObjectVTable = _obj.ObjectVTable;
 const ObjectHandle = _obj.ObjectHandle;
 const NoOp = _obj.NoOp;
 
-const PIN_WORLD_RADIUS: f32 = 5;
+pub const PIN_WORLD_RADIUS: f32 = 5;
 
 // in the Logiverse, NetTableEntries, or "nets" for short,
 // are tied to their virtually-physical representations "pins"
@@ -51,7 +51,7 @@ pub const Pin = struct {
         .spawn = Self.spawn,
         .delete = Self.delete,
         .render = Self.render,
-        .update = NoOp.update,
+        .update = Self.update,
         .mouseDown = NoOp.mouseDown,
         .mouseUp = NoOp.mouseDown,
         .mouseMove = NoOp.mouseMove,
@@ -79,6 +79,35 @@ pub const Pin = struct {
         };
     }
 
+    fn update(handle: *ObjectHandle, frame_time: f32) !void {
+        _ = frame_time;
+        var obj = handle.getObject();
+        var pin = &obj.pin;
+        if (!pin.is_connected) {
+            if (pin.is_primary) {
+                // net was split and our pin was removed,
+                // automatically create a new net since this pin is primary
+                var net_id = try handle.world.csim.addNet(true);
+                pin.csim_net_id = net_id;
+                pin.is_connected = true;
+            } else if (pin.is_gate_input) {
+                var net_id = try handle.world.csim.addNet(false);
+                pin.csim_net_id = net_id;
+                pin.is_connected = true;
+                var gate = handle.world.csim.gate_table.getPtr(pin.csim_gate_id);
+                // if gate already depends on net, something didn't get cleaned up properly
+                std.debug.assert(!gate.dependsOn(net_id));
+                try gate.inputs.append(net_id);
+            } else if (pin.is_gate_output) {
+                var net_id = try handle.world.csim.addNet(false);
+                pin.csim_net_id = net_id;
+                pin.is_connected = true;
+                var gate = handle.world.csim.gate_table.getPtr(pin.csim_gate_id);
+                gate.output = net_id;
+            }
+        }
+    }
+
     fn render(handle: *ObjectHandle, frame_time: f32) !void {
         _ = frame_time;
         var obj = handle.getObject();
@@ -86,7 +115,6 @@ pub const Pin = struct {
         var has_net = pin.is_connected;
         const is_active = if (has_net) handle.world.csim.getNetValue(pin.csim_net_id) else false;
         const pin_tint = if (is_active) raylib.YELLOW else raylib.WHITE;
-        const net_color = try handle.world.get_net_color(pin.csim_net_id);
         var maybe_net = if (has_net) handle.world.csim.net_table.getPtr(pin.csim_net_id) else null;
         const world_pos = handle.position;
         // std.debug.print("rendering pin at ({d}, {d})\n", .{ world_pos.v[0], world_pos.v[1] });
@@ -95,18 +123,27 @@ pub const Pin = struct {
             return;
         }
         const screen_pos = cam.worldToScreen(world_pos);
+        var radius = cam.curr_scale * PIN_WORLD_RADIUS;
         var k = cam.curr_scale * PIN_WORLD_RADIUS * 2;
         if (has_net and maybe_net.?.is_input) {
-            raylib.DrawCircleV(screen_pos.toRaylibVector2(), k * 0.5, raylib.GREEN);
+            raylib.DrawCircleV(screen_pos.toRaylibVector2(), radius, raylib.GREEN);
         }
         if (handle.id == handle.world.hover_handle_id) {
-            raylib.DrawCircleV(screen_pos.toRaylibVector2(), k * 0.75, raylib.YELLOW);
+            raylib.DrawCircleV(screen_pos.toRaylibVector2(), radius, raylib.YELLOW);
         }
         var screen_points: [5]Vec2(f32) = undefined;
         inline for (0..5) |c_i| {
             screen_points[c_i] = root.gfx.RectTexCoords[c_i].subScalar(0.5).mulScalar(k);
         }
-        if (pin.is_connected) raylib.DrawCircleV(screen_pos.toRaylibVector2(), k * 0.75, net_color);
+        if (pin.is_connected) {
+            const net_color = try handle.world.get_net_color(pin.csim_net_id);
+            raylib.DrawCircleV(screen_pos.toRaylibVector2(), radius + 2, net_color);
+            // raylib.DrawRectangleV(
+            //     screen_pos.subScalar(radius).toRaylibVector2(),
+            //     Vec2(f32).fill(k).toRaylibVector2(),
+            //     net_color,
+            // );
+        }
         root.gfx.drawTexturePoly(
             pin.tex.*,
             screen_pos,
@@ -118,16 +155,9 @@ pub const Pin = struct {
         if (has_net) {
             var net = maybe_net.?;
             var txtBuff: [8]u8 = undefined;
-            var written = try root.util.bufPrintNull(&txtBuff, "{d}/{d}", .{ pin.csim_net_id, net.id });
-            var x = screen_pos.v[0];
-            var y = screen_pos.v[1];
-            raylib.DrawText(
-                &written[0],
-                @floatToInt(c_int, x),
-                @floatToInt(c_int, y),
-                12,
-                raylib.PINK,
-            );
+            var written = try root.util.bufPrintNull(&txtBuff, "{d}", .{net.id});
+            var font_size = 2 * cam.curr_scale;
+            root.gfx.drawTextCentered(written, screen_pos, font_size, 1, .center, raylib.DARKGRAY);
         }
     }
 

@@ -17,18 +17,19 @@ pub const NetTableEntry = struct {
     is_undefined: bool,
 
     const Self = @This();
-    fn checkFanout(self: *Self, gate_id: GateId) bool {
-        for (self.fanout.items) |id| {
-            if (gate_id == id) return true;
-        }
-        return false;
-    }
 
     pub fn debugPrint(self: *Self) void {
         std.debug.print(
             "{{ id: {}, value: {}, fanout: {any}, ext. signal: {}, is_input: {}, is_undefined: {} }}\n",
             .{ self.id, self.value, self.fanout.items, self.external_signal, self.is_input, self.is_undefined },
         );
+    }
+
+    fn checkFanout(self: *Self, gate_id: GateId) bool {
+        for (self.fanout.items) |id| {
+            if (gate_id == id) return true;
+        }
+        return false;
     }
 };
 
@@ -47,6 +48,12 @@ pub const GateTableEntry = struct {
             "{{ id: {}, inputs: {any}, output: {}, addr: {*} }}\n",
             .{ self.id, self.inputs.items, self.output, self },
         );
+    }
+    pub fn dependsOn(self: *Self, net_id: NetId) bool {
+        for (self.inputs.items) |id| {
+            if (net_id == id) return true;
+        }
+        return false;
     }
 };
 
@@ -356,6 +363,12 @@ pub const CircuitSimulator = struct {
         try self.net_table.remove(net_id);
         var gate_iter = self.gate_table.iterator();
         while (gate_iter.next()) |gate| {
+            for (0..gate.inputs.items.len) |idx| {
+                if (gate.inputs.items[idx] == net_id) {
+                    _ = gate.inputs.swapRemove(idx);
+                    break;
+                }
+            }
             if (gate.output == net_id) {
                 gate.output = 0;
                 gate.is_output_connected = false;
@@ -393,9 +406,19 @@ pub const CircuitSimulator = struct {
             if (gate.output == net_b_id) {
                 gate.output = net_a_id;
             }
-            for (gate.inputs.items, 0..) |input, i| {
+            var i: i32 = @intCast(i32, gate.inputs.items.len) - 1;
+            var gate_already_has_input = gate.dependsOn(net_a_id);
+            while (i >= 0) : (i -= 1) {
+                var idx = @intCast(usize, i);
+                var input = gate.inputs.items[idx];
                 if (input == net_b_id) {
-                    gate.inputs.items[i] = net_a_id;
+                    if (gate_already_has_input) {
+                        _ = gate.inputs.swapRemove(idx);
+                        std.debug.print("prevented duplicate input to gate.\n", .{});
+                    } else {
+                        gate.inputs.items[idx] = net_a_id;
+                    }
+                    break;
                 }
             }
         }

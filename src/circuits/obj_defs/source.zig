@@ -29,6 +29,9 @@ const SourceVariant = enum {
     clock,
 };
 
+const TOGGLE_LABEL = "toggle";
+const BUTTON_LABEL = "btn";
+
 pub const Source = struct {
     variant: SourceVariant,
     pin_id: usize,
@@ -88,6 +91,10 @@ pub const Source = struct {
         var source = &obj.source;
         const fill_color = if (source.curr_value) raylib.GREEN else source.color;
         raylib.DrawRectangleV(screen_rect.origin.toRaylibVector2(), screen_rect.size.toRaylibVector2(), fill_color);
+        var str = if (source.variant == .toggle) TOGGLE_LABEL else BUTTON_LABEL;
+        var font_size = 5 * handle.world.cam.curr_scale;
+        var center_top = screen_rect.origin.add(Vec2(f32).init(screen_rect.size.v[0] / 2, 0));
+        root.gfx.drawTextCentered(str, center_top, font_size, 1, .top, raylib.BLACK);
         _ = frame_time;
     }
 
@@ -124,6 +131,7 @@ pub const Source = struct {
         // check if net value still matches source value (wire/pin changes may have happened)
         var pin_hdl = handle.mgr.getHandleByObjectId(.pin, source.pin_id);
         var pin = &pin_hdl.getObject().pin;
+
         var net = handle.world.csim.net_table.getPtr(pin.csim_net_id);
         if (net.external_signal != source.curr_value) {
             net.external_signal = source.curr_value;

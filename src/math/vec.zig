@@ -20,17 +20,21 @@ fn VecFunctions(comptime VecT: type, comptime N: usize, comptime NumT: type) typ
             return a;
         }
 
-        pub inline fn sub(a: VecT, b: VecT) VecT {
-            return VecT{ .v = a.v - b.v };
+        pub inline fn addScalar(a: VecT, b: NumT) VecT {
+            return VecT{ .v = a.v + @splat(2, b) };
         }
 
-        pub inline fn subScalar(a: VecT, b: NumT) VecT {
-            return VecT{ .v = a.v - @splat(2, b) };
+        pub inline fn sub(a: VecT, b: VecT) VecT {
+            return VecT{ .v = a.v - b.v };
         }
 
         pub inline fn subInPlace(a: *VecT, b: VecT) *VecT {
             a.v -= b.v;
             return a;
+        }
+
+        pub inline fn subScalar(a: VecT, b: NumT) VecT {
+            return VecT{ .v = a.v - @splat(2, b) };
         }
 
         pub inline fn mul(a: VecT, b: VecT) VecT {
@@ -42,12 +46,17 @@ fn VecFunctions(comptime VecT: type, comptime N: usize, comptime NumT: type) typ
             return a;
         }
 
-        pub inline fn div(a: VecT, b: VecT) VecT {
-            return VecT{ .v = a.v / b.v };
+        pub inline fn mulScalar(self: VecT, k: NumT) VecT {
+            return VecT{ .v = self.v * @splat(2, k) };
         }
 
-        pub inline fn divScalar(a: VecT, b: NumT) VecT {
-            return VecT{ .v = a.v / @splat(2, b) };
+        pub inline fn mulScalarInPlace(self: *VecT, k: NumT) *VecT {
+            self.v *= @splat(2, k);
+            return self;
+        }
+
+        pub inline fn div(a: VecT, b: VecT) VecT {
+            return VecT{ .v = a.v / b.v };
         }
 
         pub inline fn divInPlace(a: *VecT, b: VecT) *VecT {
@@ -55,13 +64,8 @@ fn VecFunctions(comptime VecT: type, comptime N: usize, comptime NumT: type) typ
             return a;
         }
 
-        pub inline fn mulScalar(self: VecT, k: NumT) VecT {
-            return VecT{ .v = self.v * @splat(2, k) };
-        }
-
-        pub inline fn scaleInPlace(self: *VecT, k: NumT) *VecT {
-            self.v *= @splat(2, k);
-            return self;
+        pub inline fn divScalar(a: VecT, b: NumT) VecT {
+            return VecT{ .v = a.v / @splat(2, b) };
         }
 
         pub inline fn dot(a: VecT, b: VecT) NumT {

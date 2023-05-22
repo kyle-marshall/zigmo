@@ -67,6 +67,18 @@ pub const Gate = struct {
         _ = self;
     }
 
+    pub inline fn gateVariantToColor(variant: GateVariant) Color {
+        switch (variant) {
+            .AND => return raylib.RED,
+            .OR => return raylib.GREEN,
+            .NOT => return raylib.WHITE,
+            .XOR => return raylib.BLACK,
+            .NAND => return raylib.PURPLE,
+            .NOR => return raylib.BLUE,
+            .XNOR => return raylib.LIGHTGRAY,
+        }
+    }
+
     fn render(handle: *ObjectHandle, frame_time: f32) !void {
         const origin = handle.rel_bounds.origin.add(handle.position);
         const w_rect = Rect(f32).init(origin, handle.rel_bounds.size);

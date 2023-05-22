@@ -22,6 +22,25 @@ pub fn drawTexturePoly(texture: raylib.Texture2D, center: Vec2(f32), points: []V
     rlgl.rlSetTexture(0);
 }
 
+const VerticalAlign = enum {
+    top,
+    center,
+    bottom,
+};
+
+pub fn drawTextCentered(text: []const u8, pos: Vec2(f32), font_size: f32, spacing: f32, v_align: VerticalAlign, color: Color) void {
+    var font = raylib.GetFontDefault();
+    var size = raylib.MeasureTextEx(font, &text[0], font_size, 1);
+    var y_offset = switch (v_align) {
+        .top => 0,
+        .center => -(size.y / 2),
+        .bottom => -size.y,
+    };
+    var x_offset = -(size.x / 2);
+    var txt_pos = pos.add(Vec2(f32).init(x_offset, y_offset));
+    raylib.DrawTextEx(font, &text[0], txt_pos.toRaylibVector2(), font_size, spacing, color);
+}
+
 pub const RectTexCoords = [5]Vec2(f32){
     Vec2(f32).init(0, 0),
     Vec2(f32).init(0, 1),

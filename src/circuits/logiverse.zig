@@ -43,6 +43,9 @@ const Pin = pin_mod.Pin;
 const wire_mod = @import("obj_defs/wire.zig");
 const Wire = wire_mod.Wire;
 
+const gate_mod = @import("obj_defs/gate.zig");
+const Gate = gate_mod.Gate;
+
 pub const MouseButton = enum { left, right, middle };
 
 const ColoredLineSegment = struct {
@@ -93,58 +96,32 @@ const ResourceManager = struct {
 const CompId = usize;
 
 const BlueprintId = usize;
-const GateBlueprint = struct {
-    id: BlueprintId,
-    variant: GateVariant,
-    rect: Rect(f32),
-    color: Color,
-    input_positions: ArrayList(Vec2(f32)),
-    output_position: Vec2(f32),
-    simulate_fn: SimulateGateFn,
-};
 
-const BlueprintFactory = struct {
+const GateBlueprint = struct {
+    name: []const u8,
+    num_inputs: u32,
+    variant: GateVariant,
+    simulate_fn: SimulateGateFn,
+
     const Self = @This();
-    pub inline fn gateVariantToColor(variant: GateVariant) Color {
-        switch (variant) {
-            .AND => return raylib.RED,
-            .OR => return raylib.GREEN,
-            .NOT => return raylib.WHITE,
-            .XOR => return raylib.BLACK,
-            .NAND => return raylib.PURPLE,
-            .NOR => return raylib.BLUE,
-            .XNOR => return raylib.LIGHTGRAY,
-        }
-    }
-    pub inline fn getDefaultNumInputs(variant: GateVariant) u32 {
-        if (variant == GateVariant.NOT) {
-            return 1;
-        }
-        return 2;
-    }
-    pub fn gate(allocator: Allocator, num_inputs: u32, comptime variant: GateVariant) !GateBlueprint {
-        var h: f32 = 40;
-        var rect_size = Vec2(f32).init(30, h);
-        var origin = rect_size.mulScalar(-0.5);
-        var blueprint = GateBlueprint{
-            .id = 0,
+    pub fn init(name: []const u8, num_inputs: u32, comptime variant: GateVariant) Self {
+        return Self{
+            .name = name,
+            .num_inputs = num_inputs,
             .variant = variant,
-            .rect = Rect(f32).init(origin, Vec2(f32).init(30, h)),
-            .input_positions = ArrayList(Vec2(f32)).init(allocator),
-            .output_position = Vec2(f32).init(10, 0),
-            .color = Self.gateVariantToColor(variant),
             .simulate_fn = GateFactory.getSimulateFn(variant),
         };
-        const step: f32 = h / @intToFloat(f32, num_inputs + 1);
-        for (0..num_inputs) |i| {
-            try blueprint.input_positions.append(Vec2(f32).init(
-                origin.v[0] + 5,
-                origin.v[1] + step * @intToFloat(f32, i + 1),
-            ));
-        }
-        blueprint.rect.debugPrint();
-        return blueprint;
     }
+};
+
+const GATE_BLUEPRINTS = [_]GateBlueprint{
+    GateBlueprint.init("AND", 2, GateVariant.AND),
+    GateBlueprint.init("OR", 2, GateVariant.OR),
+    GateBlueprint.init("NOT", 1, GateVariant.NOT),
+    GateBlueprint.init("XOR", 2, GateVariant.XOR),
+    GateBlueprint.init("NAND", 2, GateVariant.NAND),
+    GateBlueprint.init("NOR", 2, GateVariant.NOR),
+    GateBlueprint.init("XNOR", 2, GateVariant.XNOR),
 };
 
 // const BlueprintBelt = struct {
@@ -300,7 +277,15 @@ pub const Logiverse = struct {
         var spawned_pin_handle_ids = ArrayList(usize).init(self.allocator);
         defer input_net_ids.deinit();
 
-        for (bp.input_positions.items) |in_pos| {
+        var height: f32 = @intToFloat(f32, bp.num_inputs) * 10;
+        var width: f32 = 30;
+        var size = Vec2(f32).init(width, height);
+        var rel_bounds = Rect(f32).init(Vec2(f32).zero.sub(size.divScalar(2)), size);
+
+        var input_stride = Vec2(f32).init(0, pin_mod.PIN_WORLD_RADIUS * 2);
+        var in_pos = rel_bounds.origin.add(Vec2(f32).fill(pin_mod.PIN_WORLD_RADIUS));
+
+        for (0..bp.num_inputs) |_| {
             const pos = world_pos.add(in_pos);
             const net_id = try self.csim.addNet(false);
             try input_net_ids.append(net_id);
@@ -309,10 +294,11 @@ pub const Logiverse = struct {
             var pin = &pin_hdl.getObject().pin;
             pin.is_connected = true;
             pin.csim_net_id = net_id;
+            in_pos = in_pos.add(input_stride);
         }
 
         const output_net_id = try self.csim.addNet(false);
-        const output_pos = world_pos.add(bp.output_position);
+        const output_pos = world_pos.add(Vec2(f32).X.mulScalar(width / 2 - pin_mod.PIN_WORLD_RADIUS));
         const output_handle = try self.spawnObject(.pin, output_pos);
         var output_obj = output_handle.getObject();
         var output_pin = &output_obj.pin;
@@ -326,8 +312,8 @@ pub const Logiverse = struct {
         var wgate = &wgate_hdl.getObject().gate;
         wgate.variant = bp.variant;
         wgate.csim_gate_id = csim_gate_id;
-        wgate.color = bp.color;
-        wgate_hdl.rel_bounds = bp.rect;
+        wgate.color = Gate.gateVariantToColor(bp.variant);
+        wgate_hdl.rel_bounds = rel_bounds;
 
         for (spawned_pin_handle_ids.items) |pin_hdl_id| {
             var pin_hdl = self.obj_mgr.getHandle(pin_hdl_id);
@@ -508,23 +494,23 @@ pub const Logiverse = struct {
         if (button == .left) {
             if (self.hover_handle_id == null) {
                 // _ = try self.spawnPin(self.hover_pos, false);
-
-                if (raylib.IsKeyDown(raylib.KEY_ONE)) {
-                    // and gate
-                    var bp = try BlueprintFactory.gate(self.allocator, 2, .AND);
-                    try self.spawnGate(&bp, self.hover_pos);
-                } else if (raylib.IsKeyDown(raylib.KEY_TWO)) {
-                    // or gate
-                    var bp = try BlueprintFactory.gate(self.allocator, 2, .OR);
-                    try self.spawnGate(&bp, self.hover_pos);
-                } else if (raylib.IsKeyDown(raylib.KEY_THREE)) {
-                    // nand gate
-                    var bp = try BlueprintFactory.gate(self.allocator, 2, .NAND);
-                    try self.spawnGate(&bp, self.hover_pos);
-                } else if (raylib.IsKeyDown(raylib.KEY_Q)) {
-                    _ = try self.spawnObject(.source, self.hover_pos);
-                } else {
-                    _ = try self.spawnObject(.pin, self.hover_pos);
+                var k = raylib.KEY_ZERO;
+                var placed_gate = false;
+                while (k <= raylib.KEY_NINE) : (k += 1) {
+                    if (raylib.IsKeyDown(k)) {
+                        var idx = if (k == raylib.KEY_ZERO) 9 else k - raylib.KEY_ONE;
+                        var bp = GATE_BLUEPRINTS[@intCast(usize, idx)];
+                        try self.spawnGate(&bp, self.hover_pos);
+                        placed_gate = true;
+                        break;
+                    }
+                }
+                if (!placed_gate) {
+                    if (raylib.IsKeyDown(raylib.KEY_Q)) {
+                        _ = try self.spawnObject(.source, self.hover_pos);
+                    } else {
+                        _ = try self.spawnObject(.pin, self.hover_pos);
+                    }
                 }
                 try self.updateHoverObj();
                 return;
@@ -607,6 +593,7 @@ pub const Logiverse = struct {
     }
 
     pub fn _update(self: *Self, dt: f32) !void {
+        try self.updateAllObjectsOfVariant(.pin, dt);
         try self.updateAllObjectsOfVariant(.source, dt);
 
         if (raylib.IsKeyPressed(raylib.KEY_Z)) {
