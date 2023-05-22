@@ -252,18 +252,19 @@ test "test union of structs" {
             self.anger_level -= 0.25;
         }
     };
-    const CowOrKaren = union {
+    const CowOrKaren = extern union {
         cow: Cow,
         karen: Karen,
     };
     var obj0: CowOrKaren = .{ .cow = .{ .id = 69, .age = 420 } };
     var obj1: CowOrKaren = .{ .karen = .{ .id = 1, .complaint_count = 9900, .anger_level = 9134.25 } };
 
-    var cow = obj0.cow;
-    try std.testing.expectEqual(@as(usize, 69), cow.id);
-    var notKaren = &obj0.karen;
-    notKaren.id = 99;
-    try std.testing.expectEqual(@as(usize, 99), cow.id);
+    var cow_ptr = &obj0.cow;
+    try std.testing.expectEqual(@as(usize, 69), cow_ptr.id);
+
+    var karen_ptr = @ptrCast(*Karen, cow_ptr);
+    karen_ptr.id = 99;
+    try std.testing.expectEqual(@as(usize, 99), cow_ptr.id);
 
     var karen = &obj1.karen;
     try std.testing.expectEqual(@as(u32, 9900), karen.complaint_count);
