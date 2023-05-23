@@ -37,14 +37,9 @@ const ObjectVariant = _obj.ObjectVariant;
 const ObjectVTable = _obj.ObjectVTable;
 const NoOp = _obj.NoOp;
 
-const pin_mod = @import("obj_defs/pin.zig");
-const Pin = pin_mod.Pin;
-
-const wire_mod = @import("obj_defs/wire.zig");
-const Wire = wire_mod.Wire;
-
-const gate_mod = @import("obj_defs/gate.zig");
-const Gate = gate_mod.Gate;
+const Pin = @import("obj_defs/Pin.zig");
+const Wire = @import("obj_defs/Wire.zig");
+const Gate = @import("obj_defs/Gate.zig");
 
 pub const MouseButton = enum { left, right, middle };
 
@@ -219,7 +214,7 @@ pub const Logiverse = struct {
     }
 
     pub fn load_textures(self: *Self) !void {
-        try self.resource_manager.loadTexture(pin_mod.PIN_TEX_PATH);
+        try self.resource_manager.loadTexture(Pin.PIN_TEX_PATH);
     }
 
     pub fn init_test_pins(self: *Self) !void {
@@ -282,8 +277,8 @@ pub const Logiverse = struct {
         var size = Vec2(f32).init(width, height);
         var rel_bounds = Rect(f32).init(Vec2(f32).zero.sub(size.divScalar(2)), size);
 
-        var input_stride = Vec2(f32).init(0, pin_mod.PIN_WORLD_RADIUS * 2);
-        var in_pos = rel_bounds.origin.add(Vec2(f32).fill(pin_mod.PIN_WORLD_RADIUS));
+        var input_stride = Vec2(f32).init(0, Pin.PIN_WORLD_RADIUS * 2);
+        var in_pos = rel_bounds.origin.add(Vec2(f32).fill(Pin.PIN_WORLD_RADIUS));
 
         for (0..bp.num_inputs) |_| {
             const pos = world_pos.add(in_pos);
@@ -298,7 +293,7 @@ pub const Logiverse = struct {
         }
 
         const output_net_id = try self.csim.addNet(false);
-        const output_pos = world_pos.add(Vec2(f32).X.mulScalar(width / 2 - pin_mod.PIN_WORLD_RADIUS));
+        const output_pos = world_pos.add(Vec2(f32).X.mulScalar(width / 2 - Pin.PIN_WORLD_RADIUS));
         const output_handle = try self.spawnObject(.pin, output_pos);
         var output_obj = output_handle.getObject();
         var output_pin = &output_obj.pin;
@@ -391,10 +386,10 @@ pub const Logiverse = struct {
 
         // TODO rewrite everything to use handles/handle_ids
 
-        var pinStore = self.obj_mgr.getStore(.pin);
-        var obj0 = pinStore.getPtr(p0);
+        var pin_store = self.obj_mgr.getStore(.pin);
+        var obj0 = pin_store.getPtr(p0);
         var pin0 = &obj0.pin;
-        var obj1 = pinStore.getPtr(p1);
+        var obj1 = pin_store.getPtr(p1);
         var pin1 = &obj1.pin;
         const any_primary = pin0.is_primary or pin1.is_primary;
         const n0 = pin0.csim_net_id;
@@ -403,17 +398,7 @@ pub const Logiverse = struct {
             // merge corresponding nets (no directionality preference... yet)
             try self.csim.mergeNets(n0, n1);
             std.debug.print("after merge:\n", .{});
-            self.csim.printNetTable();
-            var pinIter = pinStore.idIterator();
-            while (pinIter.next()) |obj_id| {
-                var obj = pinStore.getPtr(obj_id);
-                var pin = &obj.pin;
-                if (pin.csim_net_id == n1) {
-                    // std.debug.print("p{} -> n{}\n", .{ obj_id, n0 });
-                    pin.csim_net_id = n0;
-                }
-                // std.debug.print("p{} point to n{}\n", .{ obj_id, pin.csim_net_id });
-            }
+            self.csim.debugPrintState();
         } else if (pin0.is_connected and !pin1.is_connected) {
             // pin_b joins pin_a's net
             pin1.csim_net_id = pin0.csim_net_id;
@@ -428,6 +413,15 @@ pub const Logiverse = struct {
         }
         pin0.is_connected = true;
         pin1.is_connected = true;
+
+        var pin_iter = pin_store.idIterator();
+        while (pin_iter.next()) |obj_id| {
+            var obj = pin_store.getPtr(obj_id);
+            var pin = &obj.pin;
+            if (pin.csim_net_id == n1) {
+                pin.csim_net_id = n0;
+            }
+        }
 
         var net = self.csim.net_table.getPtr(pin0.csim_net_id);
 
@@ -492,7 +486,7 @@ pub const Logiverse = struct {
 
     pub fn _mouseButtonDown(self: *Self, button: MouseButton, screen_pos: Vec2(f32)) !void {
         if (button == .left) {
-            if (self.hover_handle_id == null) {
+            if (self.hover_handle_id == null and self.bounds.containsPoint(self.hover_pos)) {
                 // _ = try self.spawnPin(self.hover_pos, false);
                 var k = raylib.KEY_ZERO;
                 var placed_gate = false;
@@ -598,8 +592,8 @@ pub const Logiverse = struct {
 
         if (raylib.IsKeyPressed(raylib.KEY_Z)) {
             std.debug.print("\n", .{});
-            self.csim.printNetTable();
-            self.csim.printGateTable();
+            self.csim.debugPrintState();
+            try self.csim.logState();
         }
         try self.csim.simulate();
     }
@@ -625,7 +619,7 @@ pub const Logiverse = struct {
         if (self.is_wiring) {
             var start_pin_handle = self.obj_mgr.getHandleByObjectId(.pin, self.wire_start_pin);
             const start = self.cam.worldToScreen(start_pin_handle.position);
-            raylib.DrawLineEx(start.toRaylibVector2(), self.mouse_pos.toRaylibVector2(), wire_mod.WIRE_WIDTH, raylib.ORANGE);
+            raylib.DrawLineEx(start.toRaylibVector2(), self.mouse_pos.toRaylibVector2(), Wire.WIRE_WIDTH, raylib.ORANGE);
         }
     }
 };

@@ -12,10 +12,10 @@ const math = root.math;
 const Vec2 = math.Vec2;
 const Rect = math.geo.Rect;
 
-const Pin = @import("obj_defs/pin.zig").Pin;
-const Wire = @import("obj_defs/wire.zig").Wire;
-const Gate = @import("obj_defs/gate.zig").Gate;
-const Source = @import("obj_defs/source.zig").Source;
+const Pin = @import("obj_defs/Pin.zig");
+const Wire = @import("obj_defs/Wire.zig");
+const Gate = @import("obj_defs/Gate.zig");
+const Source = @import("obj_defs/Source.zig");
 
 pub const ObjectVariant = enum { pin, wire, gate, source };
 const NUM_VARIANTS = 4;

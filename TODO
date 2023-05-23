@@ -8,5 +8,6 @@
 [x] init camera (e.g. implement "look at")
 [/] resource manager: textures
 [ ] resource manager: strings used in render
+[ ] move tests that are only related to learning zig into another project
 [LOWPRI] noise generators
 [LOWPRI] object occlusion pre-render pass

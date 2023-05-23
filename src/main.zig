@@ -21,6 +21,26 @@ const bunnyTest = @import("bunny_test.zig").bunnyTest;
 const circuitTest = @import("circuits/circuit_simulator.zig").circuitTest;
 const initiateCircuitSandbox = @import("circuits/logiverse.zig").initiateCircuitSandbox;
 
+pub const std_options = struct {
+    pub const logFn = customLogFn;
+};
+
+/// modified from std lib example: https://ziglang.org/documentation/master/std/#A;std:log
+fn customLogFn(
+    comptime level: std.log.Level,
+    comptime scope: @TypeOf(.EnumLiteral),
+    comptime format: []const u8,
+    args: anytype,
+) void {
+    _ = scope;
+    const prefix = "[" ++ comptime level.asText() ++ "] ";
+    // Print the message to stderr, silently ignoring any errors
+    std.debug.getStderrMutex().lock();
+    defer std.debug.getStderrMutex().unlock();
+    const stderr = std.io.getStdErr().writer();
+    nosuspend stderr.print(prefix ++ format ++ "\n", args) catch return;
+}
+
 pub fn main() !void {
     std.debug.print("It's a busy day ahead!\n", .{});
     try initiateCircuitSandbox();
@@ -158,6 +178,7 @@ test "hashmap test" {
 
 test "rect bounds test" {
     const rect = Rect(f32).init(Vec2(f32).zero, Vec2(f32).fill(1000));
+    try std.testing.expect(!rect.containsPoint(Vec2(f32).init(-0.00000000000030316488252093987, -0.00000000000030316488252093987)));
     try std.testing.expect(rect.containsPoint(Vec2(f32).init(778.1972045898438, 778.1972045898438)));
     try std.testing.expect(!rect.containsPoint(Vec2(f32).init(1000, 1000)));
     try std.testing.expect(!rect.containsPoint(Vec2(f32).init(1001, 1001)));
@@ -239,7 +260,14 @@ test "test enum to int" {
 test "test union of structs" {
     const Cow = packed struct {
         id: usize,
-        age: usize,
+        age: u32,
+        grass_chew_rate: f32,
+
+        const Self = @This();
+        pub fn complain(self: *Self) void {
+            _ = self;
+            std.debug.print("Mooooo!\n", .{});
+        }
     };
     const Karen = packed struct {
         id: usize,
@@ -256,7 +284,7 @@ test "test union of structs" {
         cow: Cow,
         karen: Karen,
     };
-    var obj0: CowOrKaren = .{ .cow = .{ .id = 69, .age = 420 } };
+    var obj0: CowOrKaren = .{ .cow = .{ .id = 69, .age = 420, .grass_chew_rate = 1 } };
     var obj1: CowOrKaren = .{ .karen = .{ .id = 1, .complaint_count = 9900, .anger_level = 9134.25 } };
 
     var cow_ptr = &obj0.cow;
@@ -264,11 +292,74 @@ test "test union of structs" {
 
     var karen_ptr = @ptrCast(*Karen, cow_ptr);
     karen_ptr.id = 99;
+    karen_ptr.complain();
     try std.testing.expectEqual(@as(usize, 99), cow_ptr.id);
+    try std.testing.expectEqual(@as(usize, 421), cow_ptr.age);
+    try std.testing.expectEqual(@as(f32, 0.75), cow_ptr.grass_chew_rate);
 
     var karen = &obj1.karen;
     try std.testing.expectEqual(@as(u32, 9900), karen.complaint_count);
     karen.complain();
     try std.testing.expectEqual(@as(u32, 9901), karen.complaint_count);
     try std.testing.expectEqual(@as(f32, 9134), karen.anger_level);
+}
+
+test "multi multi multi" {
+    var numbers: [10]usize = undefined;
+    var numbers2: [10]usize = undefined;
+    var numbers3: [10]usize = undefined;
+    for (0..10) |i| {
+        numbers[i] = i;
+        numbers2[i] = i * 2;
+        numbers3[i] = i * 3;
+    }
+    var current: usize = 0;
+    for (numbers, numbers2, numbers3) |a, b, c| {
+        try std.testing.expectEqual(current, a);
+        try std.testing.expectEqual(current, b / 2);
+        try std.testing.expectEqual(current, c / 3);
+        current += 1;
+    }
+    var maybe_x: ?usize = 1;
+    var maybe_y: ?usize = 2;
+    var maybe_z: ?usize = 3;
+    if (maybe_x) |x|
+        if (maybe_y) |y|
+            if (maybe_z) |z| {
+                try std.testing.expectEqual(@as(usize, 1), x);
+                try std.testing.expectEqual(@as(usize, 2), y);
+                try std.testing.expectEqual(@as(usize, 3), z);
+            } else {
+                unreachable;
+            };
+}
+
+test "optional ptrs and ptrs to optionals" {
+    const Taco = struct {
+        soft: bool,
+        spice_level: u8,
+    };
+
+    var t0: ?Taco = Taco{ .soft = true, .spice_level = 1 };
+    var t0_ptr = &t0;
+
+    var t1: *Taco = &t0_ptr.*.?;
+    t1.spice_level = 2;
+
+    var e1: u8 = 2;
+    try std.testing.expectEqual(e1, t0.?.spice_level);
+    var p0 = @ptrToInt(t0_ptr);
+    var p1 = @ptrToInt(t1);
+    try std.testing.expectEqual(p0, p1);
+}
+
+test "undefined memory in debug build" {
+    const allocator = std.testing.allocator;
+    const n = 32;
+    // currently zig fills allocated memory with 0xaa while in debug mode
+    // e.g. this test fails with -Doptimize ReleaseFast
+    var s0 = [_]u8{0xaa} ** n;
+    var s1 = try std.testing.allocator.alloc(u8, n);
+    defer allocator.free(s1);
+    try std.testing.expect(std.mem.eql(u8, &s0, s1));
 }

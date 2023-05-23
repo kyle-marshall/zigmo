@@ -18,22 +18,37 @@ pub const NetTableEntry = struct {
 
     const Self = @This();
 
-    pub fn debugPrint(self: *Self) void {
-        std.debug.print(
-            "{{ id: {}, value: {}, fanout: {any}, ext. signal: {}, is_input: {}, is_undefined: {} }}\n",
-            .{ self.id, self.value, self.fanout.items, self.external_signal, self.is_input, self.is_undefined },
-        );
-    }
-
     fn checkFanout(self: *Self, gate_id: GateId) bool {
         for (self.fanout.items) |id| {
             if (gate_id == id) return true;
         }
         return false;
     }
+
+    pub fn print(self: *Self, writer: anytype) !void {
+        try writer.print(
+            "{{ id: {}, value: {}, fanout: {any}, ext. signal: {}, is_input: {}, is_undefined: {} }}",
+            .{
+                self.id,
+                self.value,
+                self.fanout.items,
+                self.external_signal,
+                self.is_input,
+                self.is_undefined,
+            },
+        );
+    }
+
+    pub inline fn debugPrint(self: *Self) void {
+        self.print(std.io.getStdErr().writer()) catch {};
+    }
 };
 
-pub const SimulateGateFn = *const fn (simulator: *CircuitSimulator, gate_ptr: *GateTableEntry) LogicValue;
+pub const SimulateGateFn = *const fn (
+    simulator: *CircuitSimulator,
+    gate_ptr: *GateTableEntry,
+) LogicValue;
+
 pub const GateTableEntry = struct {
     id: GateId,
     simulate: SimulateGateFn,
@@ -42,18 +57,25 @@ pub const GateTableEntry = struct {
     is_output_connected: bool,
     // we avoid checking if gate queue already contains gate for now
     is_stale: bool,
+
     const Self = @This();
-    pub fn debugPrint(self: *Self) void {
-        std.debug.print(
-            "{{ id: {}, inputs: {any}, output: {}, addr: {*} }}\n",
-            .{ self.id, self.inputs.items, self.output, self },
-        );
-    }
+
     pub fn dependsOn(self: *Self, net_id: NetId) bool {
         for (self.inputs.items) |id| {
             if (net_id == id) return true;
         }
         return false;
+    }
+
+    pub fn print(self: *Self, writer: anytype) !void {
+        try writer.print(
+            "{{ id: {}, inputs: {any}, output: {}, addr: {*} }}\n",
+            .{ self.id, self.inputs.items, self.output, self },
+        );
+    }
+
+    pub inline fn debugPrint(self: *Self) void {
+        self.print(std.io.getStdErr().writer()) catch {};
     }
 };
 
@@ -133,7 +155,11 @@ pub const GateFactory = struct {
         };
     }
 
-    pub fn createGate(allocator: Allocator, id: GateId, simulate: SimulateGateFn) GateTableEntry {
+    pub fn createGate(
+        allocator: Allocator,
+        id: GateId,
+        simulate: SimulateGateFn,
+    ) GateTableEntry {
         return GateTableEntry{
             .id = id,
             .simulate = simulate,
@@ -184,27 +210,66 @@ pub const CircuitSimulator = struct {
         self.gate_queue.deinit();
     }
 
-    pub fn printNetTable(self: *Self) void {
-        std.debug.print("[NET TABLE]\n", .{});
+    pub fn printNetTable(self: *Self, writer: anytype) !void {
+        try writer.print("[NET TABLE]\n", .{});
         var iter = self.net_table.iterator();
         while (iter.next()) |net| {
             net.debugPrint();
         }
-        std.debug.print("primary inputs: {any}\n", .{self.external_inputs.items});
+        std.debug.print("primary inputs: {any}\n", .{
+            self.external_inputs.items,
+        });
     }
-    pub fn printGateTable(self: *Self) void {
-        std.debug.print("[GATE TABLE]\n", .{});
+
+    pub fn printGateTable(self: *Self, writer: anytype) !void {
+        try writer.print("[GATE TABLE]\n", .{});
         var gate_iter = self.gate_table.iterator();
         while (gate_iter.next()) |gate| {
             gate.debugPrint();
         }
     }
 
+    pub fn debugPrintState(self: *Self) void {
+        const writer = std.io.getStdErr().writer();
+        self.printNetTable(writer) catch {};
+        self.printGateTable(writer) catch {};
+    }
+
+    pub fn logState(self: *Self) !void {
+        const random_number = std.crypto.random.int(u64);
+        var path_buff: [64]u8 = undefined;
+        const path = try std.fmt.bufPrint(
+            &path_buff,
+            "log/csim-state-{d}.txt",
+            .{random_number},
+        );
+        const cwd = std.fs.cwd();
+        const file = try cwd.createFile(path, .{ .read = true });
+        defer file.close();
+        var writer = file.writer();
+        try self.printNetTable(writer);
+        try self.printGateTable(writer);
+    }
+
+    pub fn panic(self: *Self, comptime reason: []const u8, args: anytype) void {
+        std.debug.print("RED ALERT:\n", .{});
+        std.debug.print(reason, args);
+        std.debug.print("CSIM EMERGENCY SHUTDOWN PROTOCOL INITIATED.\n", .{});
+        self.debugPrintState();
+        self.logState() catch {};
+        std.os.exit(1);
+        unreachable;
+    }
+
     pub inline fn getNetValue(self: *Self, net_id: NetId) LogicValue {
         return self.net_table.getPtr(net_id).value;
     }
 
-    pub inline fn updateValue(self: *Self, net_id: NetId, value: LogicValue) void {
+    pub inline fn updateNetValue(
+        self: *Self,
+        net_id: NetId,
+        value: LogicValue,
+    ) void {
         var net = self.net_table.getPtr(net_id);
         net.value = value;
         net.is_undefined = false;
@@ -225,7 +290,10 @@ pub const CircuitSimulator = struct {
         if (is_external_input) {
             try self.external_inputs.append(id);
         }
-        std.log.info("initialized net {d} (is_external_input = {})", .{ id, is_external_input });
+        std.log.info(
+            "initialized net {d} (is_external_input = {})",
+            .{ id, is_external_input },
+        );
         return id;
     }
 
@@ -275,8 +343,15 @@ pub const CircuitSimulator = struct {
     }
 
     pub fn simulate(self: *Self) !void {
+        // THIS LIMIT CAN BE RAISED WHEN THE BUGS ARE GONE
+        const max_loop_count = 1000;
         try self.readInputs();
-        while (self.event_queue.items.len > 0) {
+        var loop_count: usize = 0;
+        while (self.event_queue.items.len > 0) : (loop_count += 1) {
+            if (loop_count > max_loop_count) {
+                self.panic("simulate() overflow", .{});
+                unreachable;
+            }
             try self.processEvents();
             self.flushIntermediateOutput();
             if (self.gate_queue.items.len > 0) {
@@ -350,7 +425,7 @@ pub const CircuitSimulator = struct {
     /// read values from event queue, write them to net table
     pub fn flushIntermediateOutput(self: *Self) void {
         for (self.event_queue.items) |*event| {
-            self.updateValue(event.net_id, event.value);
+            self.updateNetValue(event.net_id, event.value);
         }
         self.event_queue.clearRetainingCapacity();
     }
@@ -395,12 +470,24 @@ pub const CircuitSimulator = struct {
         // TODO invalidateNet probably not needed
         self.invalidateNet(net_a_id);
         self.invalidateNet(net_b_id);
+
+        // clean up external_inputs
+        var b_is_ext_input = net_b.is_input;
         for (self.external_inputs.items, 0..) |input_id, idx| {
             if (input_id == net_b_id) {
-                self.external_inputs.items[idx] = net_a_id;
-                net_a.is_input = true;
+                b_is_ext_input = true;
+                _ = self.external_inputs.swapRemove(idx);
+                break;
             }
         }
+        if (b_is_ext_input != net_b.is_input) {
+            self.panic("net_b.is_input != b_is_ext_input", .{});
+        }
+        if (b_is_ext_input) {
+            try self.external_inputs.append(net_a_id);
+            net_a.is_input = true;
+        }
+
         var gate_iter = self.gate_table.iterator();
         while (gate_iter.next()) |gate| {
             if (gate.output == net_b_id) {
@@ -480,7 +567,10 @@ pub fn circuitTest() !void {
 
     for (input_vecs.items, 0..) |v, v_i| {
         for (0..frames_per_input_change) |frame| {
-            std.debug.print("[Frame {}] {any}\n", .{ frame + v_i * frames_per_input_change, v });
+            std.debug.print(
+                "[Frame {}] {any}\n",
+                .{ frame + v_i * frames_per_input_change, v },
+            );
 
             // csim.updateValue(n0, v[0]); <- this doesn't work bc n0/n1 are external inputs
             // csim.updateValue(n1, v[1]);
