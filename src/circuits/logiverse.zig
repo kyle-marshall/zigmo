@@ -6,8 +6,8 @@ const TailQueue = std.TailQueue;
 const AutoHashMap = std.AutoHashMap;
 const AutoArrayHashMap = std.AutoArrayHashMap;
 
-pub const raylib = @cImport(@cInclude("raylib.h"));
-pub const rlgl = @cImport(@cInclude("rlgl.h"));
+const raylib = @cImport(@cInclude("raylib.h"));
+const rlgl = @cImport(@cInclude("rlgl.h"));
 const Color = raylib.Color;
 const Texture = raylib.Texture;
 
@@ -145,12 +145,6 @@ pub const Logiverse = struct {
 
     obj_mgr: ObjectManager,
 
-    // handles: ObjectStore(ObjectHandle),
-    // obj_v_tables: [3]ObjectVTable,
-
-    // pins: ObjectStore(Pin),
-    // components: ObjectStore(WorldGate),
-
     // world action state
     is_wiring: bool,
     wire_start_pin: usize,
@@ -195,9 +189,6 @@ pub const Logiverse = struct {
             ),
             .resource_manager = ResourceManager.init(allocator),
             .obj_mgr = try ObjectManager.init(allocator),
-            // .pins = ObjectStore(Pin).init(allocator),
-            // .components = ObjectStore(WorldGate).init(allocator),
-            // .handles = ObjectStore(ObjectHandle).init(allocator),
             .pan_start = Vec2(f32).zero,
             .mouse_pos = Vec2(f32).zero,
             .is_panning = false,
@@ -220,7 +211,6 @@ pub const Logiverse = struct {
     pub fn init_test_pins(self: *Self) !void {
         // add 10 input pins for testing
         for (0..10) |i| {
-            // const pin_id = try obj.spawnPin(Vec2(f32).init(20, (@intToFloat(f32, i) + 1) * 20), true);
             const net_id = try self.csim.addNet(true);
             const world_pos = Vec2(f32).init(20, (@intToFloat(f32, i) + 1) * 20);
             const handle = try self.spawnObject(.pin, world_pos);
@@ -254,7 +244,7 @@ pub const Logiverse = struct {
         handle.position = world_pos;
         try handle.spawn();
         _ = try self.spatial_hash.insert(world_pos, handle.id);
-        std.debug.print("spawned object {} -> {} {}\n", .{ handle.id, handle.variant, handle.obj_id });
+        std.log.info("spawned object {} -> {} {}\n", .{ handle.id, handle.variant, handle.obj_id });
         return handle;
     }
 
@@ -301,7 +291,11 @@ pub const Logiverse = struct {
         output_pin.is_connected = true;
         output_pin.csim_net_id = output_net_id;
 
-        const csim_gate_id = try self.csim.addGate(bp.simulate_fn, input_net_ids.items, output_net_id);
+        const csim_gate_id = try self.csim.addGate(
+            bp.simulate_fn,
+            input_net_ids.items,
+            output_net_id,
+        );
 
         var wgate_hdl = try self.spawnObject(.gate, world_pos);
         var wgate = &wgate_hdl.getObject().gate;
@@ -349,25 +343,40 @@ pub const Logiverse = struct {
             // ensure net fanout includes gate id
             for (net.fanout.items) |gate_id| {
                 if (gate_id == pin.csim_gate_id) {
-                    std.debug.print("onPinRewired: net {} fanout already includes gate {}\n", .{ pin.csim_net_id, pin.csim_gate_id });
+                    std.debug.print(
+                        "onPinRewired: net {} fanout already includes gate {}\n",
+                        .{ pin.csim_net_id, pin.csim_gate_id },
+                    );
                     return;
                 }
             }
             try net.fanout.append(pin.csim_gate_id);
-            std.debug.print("onPinRewired: net {} fanout updated to {any}\n", .{ pin.csim_net_id, net.fanout.items });
+            std.debug.print(
+                "onPinRewired: net {} fanout updated to {any}\n",
+                .{ pin.csim_net_id, net.fanout.items },
+            );
         } else if (pin.is_gate_output) {
             var gate = self.csim.gate_table.getPtr(pin.csim_gate_id);
             // ensure gate output is set to net id
             if (gate.output == pin.csim_net_id) {
-                std.debug.print("onPinRewired: gate {} output already set to {}\n", .{ pin.csim_gate_id, pin.csim_net_id });
+                std.debug.print(
+                    "onPinRewired: gate {} output already set to {}\n",
+                    .{ pin.csim_gate_id, pin.csim_net_id },
+                );
                 std.debug.print("{*}\n", .{gate});
                 gate.debugPrint();
                 return;
             }
             gate.output = pin.csim_net_id;
-            std.debug.print("onPinRewired: gate {} output set to {}\n", .{ pin.csim_gate_id, pin.csim_net_id });
+            std.debug.print(
+                "onPinRewired: gate {} output set to {}\n",
+                .{ pin.csim_gate_id, pin.csim_net_id },
+            );
         } else {
-            std.debug.print("onPinRewired: pin {} is not gate input or output\n", .{pin_hdl.id});
+            std.debug.print(
+                "onPinRewired: pin {} is not gate input or output\n",
+                .{pin_hdl.id},
+            );
         }
     }
 
@@ -450,7 +459,11 @@ pub const Logiverse = struct {
         if (!self.bounds.containsPoint(world_pos)) {
             return;
         }
-        const results = try self.spatial_hash.query(self.allocator, world_pos, 100.0);
+        const results = try self.spatial_hash.query(
+            self.allocator,
+            world_pos,
+            100.0,
+        );
 
         // first pass just look for a pin
         for (results.items) |*item| {
@@ -619,7 +632,12 @@ pub const Logiverse = struct {
         if (self.is_wiring) {
             var start_pin_handle = self.obj_mgr.getHandleByObjectId(.pin, self.wire_start_pin);
             const start = self.cam.worldToScreen(start_pin_handle.position);
-            raylib.DrawLineEx(start.toRaylibVector2(), self.mouse_pos.toRaylibVector2(), Wire.WIRE_WIDTH, raylib.ORANGE);
+            raylib.DrawLineEx(
+                start.toRaylibVector2(),
+                self.mouse_pos.toRaylibVector2(),
+                Wire.WIRE_WIDTH,
+                raylib.ORANGE,
+            );
         }
     }
 };
@@ -629,7 +647,10 @@ pub fn initiateCircuitSandbox() !void {
     const screen_width = 800;
     const screen_height = 600;
     const draw_grid_lines = true;
-    const screen_size_f = Vec2(f32).init(@intToFloat(f32, screen_width), @intToFloat(f32, screen_height));
+    const screen_size_f = Vec2(f32).init(
+        @intToFloat(f32, screen_width),
+        @intToFloat(f32, screen_height),
+    );
 
     const grid_div = 100;
     var pan_speed: f32 = 10;
@@ -737,7 +758,11 @@ pub fn initiateCircuitSandbox() !void {
             if (draw_grid_lines) {
                 var grid_size = world.bounds.size.div(Vec2(f32).init(grid_div, grid_div));
                 const screen_rect = world.cam.worldToScreenRect(world.bounds);
-                raylib.DrawRectangleV(screen_rect.origin.toRaylibVector2(), screen_rect.size.toRaylibVector2(), GRID_BG_COLOR);
+                raylib.DrawRectangleV(
+                    screen_rect.origin.toRaylibVector2(),
+                    screen_rect.size.toRaylibVector2(),
+                    GRID_BG_COLOR,
+                );
                 var world_x: f32 = 0;
                 var c: u32 = 0;
                 while (world_x <= world.bounds.size.v[0]) : ({
@@ -766,13 +791,6 @@ pub fn initiateCircuitSandbox() !void {
 
             raylib.DrawRectangle(0, 0, screen_width, 40, raylib.BLACK);
             raylib.DrawText("Welcome to the Logiverse", 120, 10, 20, raylib.GREEN);
-            // const obj_count = world.bunnies.items.len;
-            // const count_txt = try std.fmt.allocPrint(allocator, "{d}", .{obj_count});
-            // defer allocator.free(count_txt);
-            // const count_c_str = try util.makeNullTerminatedString(allocator, count_txt);
-            // defer allocator.free(count_c_str);
-
-            // raylib.DrawText(&count_c_str[0], 200, 10, 20, raylib.GREEN);
             raylib.DrawFPS(10, 10);
 
             raylib.EndDrawing();

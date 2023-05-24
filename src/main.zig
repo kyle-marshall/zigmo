@@ -18,12 +18,22 @@ pub const util = @import("util.zig");
 pub const ObjectStore = @import("object_store.zig").ObjectStore;
 
 const bunnyTest = @import("bunny_test.zig").bunnyTest;
+const shellTest = @import("VShell.zig").shellTest;
 const circuitTest = @import("circuits/circuit_simulator.zig").circuitTest;
 const initiateCircuitSandbox = @import("circuits/logiverse.zig").initiateCircuitSandbox;
 
 pub const std_options = struct {
     pub const logFn = customLogFn;
 };
+
+fn logLevelToLabel(level: std.log.Level) []const u8 {
+    return switch (level) {
+        .warn => "WARN",
+        .info => "INFO",
+        .err => "ERROR",
+        .debug => "DEBUG",
+    };
+}
 
 /// modified from std lib example: https://ziglang.org/documentation/master/std/#A;std:log
 fn customLogFn(
@@ -33,7 +43,7 @@ fn customLogFn(
     args: anytype,
 ) void {
     _ = scope;
-    const prefix = "[" ++ comptime level.asText() ++ "] ";
+    const prefix = "[" ++ comptime logLevelToLabel(level) ++ "] ";
     // Print the message to stderr, silently ignoring any errors
     std.debug.getStderrMutex().lock();
     defer std.debug.getStderrMutex().unlock();
@@ -43,7 +53,8 @@ fn customLogFn(
 
 pub fn main() !void {
     std.debug.print("It's a busy day ahead!\n", .{});
-    try initiateCircuitSandbox();
+    try shellTest();
+    // try initiateCircuitSandbox();
     // try circuitTest();
     // try bunnyTest();
     // try geo.doRadiusQueryBenchmark();

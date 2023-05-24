@@ -143,6 +143,16 @@ pub fn Vec2(comptime T: type) type {
             return Vec2(TP).init(tx(self.v[0], 0), tx(self.v[1], 1));
         }
 
+        pub inline fn intToFloat(self: Self, comptime IntT: type) Vec2(IntT) {
+            const map_fn = (struct {
+                pub fn f(value: T, index: usize) IntT {
+                    _ = index;
+                    return @intToFloat(IntT, value);
+                }
+            }).f;
+            return self.map(IntT, map_fn);
+        }
+
         pub inline fn floatToInt(self: Self, comptime IntT: type) Vec2(IntT) {
             const map_fn = (struct {
                 pub fn f(value: T, index: usize) IntT {
