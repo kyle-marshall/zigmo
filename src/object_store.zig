@@ -1,6 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
+const AutoArrayHashMap = std.AutoArrayHashMap;
 
 fn ObjectStoreIterator(comptime T: type) type {
     return struct {
@@ -61,13 +62,13 @@ pub fn ObjectStore(comptime T: type) type {
     return struct {
         const Self = @This();
         inner_list: ArrayList(T),
-        free_ids: ArrayList(usize),
+        free_ids: AutoArrayHashMap(usize, void),
         mask: ArrayList(bool),
 
         pub fn init(allocator: Allocator) Self {
             return Self{
                 .inner_list = ArrayList(T).init(allocator),
-                .free_ids = ArrayList(usize).init(allocator),
+                .free_ids = AutoArrayHashMap(usize, void).init(allocator),
                 .mask = ArrayList(bool).init(allocator),
             };
         }
@@ -86,10 +87,18 @@ pub fn ObjectStore(comptime T: type) type {
             return &self.inner_list.items[id];
         }
 
-        pub inline fn store(self: *Self, obj: T) !usize {
+        /// assumes caller checked free_ids is not empty
+        pub fn nextFreeId(self: *Self) usize {
+            var iter = self.free_ids.iterator();
+            return iter.next().?.key_ptr.*;
+        }
+
+        pub fn store(self: *Self, obj: T) !usize {
+            const free_id_count = self.free_ids.count();
             var id: usize = undefined;
-            if (self.free_ids.items.len > 0) {
-                id = self.free_ids.pop();
+            if (free_id_count > 0) {
+                id = self.nextFreeId();
+                _ = self.free_ids.swapRemove(id);
                 self.inner_list.items[id] = obj;
                 self.mask.items[id] = true;
             } else {
@@ -101,7 +110,7 @@ pub fn ObjectStore(comptime T: type) type {
         }
 
         pub inline fn remove(self: *Self, id: usize) !void {
-            try self.free_ids.append(id);
+            try self.free_ids.put(id, {});
             self.mask.items[id] = false;
         }
 

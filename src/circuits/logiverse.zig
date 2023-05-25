@@ -272,29 +272,23 @@ pub const Logiverse = struct {
 
         for (0..bp.num_inputs) |_| {
             const pos = world_pos.add(in_pos);
-            const net_id = try self.csim.addNet(false);
-            try input_net_ids.append(net_id);
             const pin_hdl = try self.spawnObject(.pin, pos);
             try spawned_pin_handle_ids.append(pin_hdl.id);
             var pin = &pin_hdl.getObject().pin;
-            pin.is_connected = true;
-            pin.csim_net_id = net_id;
+            try input_net_ids.append(pin.csim_net_id);
             in_pos = in_pos.add(input_stride);
         }
 
-        const output_net_id = try self.csim.addNet(false);
         const output_pos = world_pos.add(Vec2(f32).X.mulScalar(width / 2 - Pin.PIN_WORLD_RADIUS));
         const output_handle = try self.spawnObject(.pin, output_pos);
         var output_obj = output_handle.getObject();
         var output_pin = &output_obj.pin;
         try spawned_pin_handle_ids.append(output_handle.id);
-        output_pin.is_connected = true;
-        output_pin.csim_net_id = output_net_id;
 
         const csim_gate_id = try self.csim.addGate(
             bp.simulate_fn,
             input_net_ids.items,
-            output_net_id,
+            output_pin.csim_net_id,
         );
 
         var wgate_hdl = try self.spawnObject(.gate, world_pos);

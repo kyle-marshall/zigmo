@@ -21,6 +21,7 @@ const bunnyTest = @import("bunny_test.zig").bunnyTest;
 const shellTest = @import("VShell.zig").shellTest;
 const circuitTest = @import("circuits/circuit_simulator.zig").circuitTest;
 const initiateCircuitSandbox = @import("circuits/logiverse.zig").initiateCircuitSandbox;
+const doInterfaceTests = @import("interface_tests.zig").doTests;
 
 pub const std_options = struct {
     pub const logFn = customLogFn;
@@ -53,8 +54,9 @@ fn customLogFn(
 
 pub fn main() !void {
     std.debug.print("It's a busy day ahead!\n", .{});
-    try shellTest();
-    // try initiateCircuitSandbox();
+    // try doInterfaceTests();
+    // try shellTest();
+    try initiateCircuitSandbox();
     // try circuitTest();
     // try bunnyTest();
     // try geo.doRadiusQueryBenchmark();

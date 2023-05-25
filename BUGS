@@ -1,0 +1,1 @@
+- gate input pins gets out of sync with newly assigned net's after simultaneous disconnect of both inputs

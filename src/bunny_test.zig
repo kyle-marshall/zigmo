@@ -351,7 +351,7 @@ pub fn bunnyTest() !void {
             const obj_count = world.bunnies.items.len;
             const count_txt = try std.fmt.allocPrint(allocator, "{d}", .{obj_count});
             defer allocator.free(count_txt);
-            const count_c_str = try util.makeNullTerminatedString(allocator, count_txt);
+            const count_c_str = count_txt[0.. :0];
             defer allocator.free(count_c_str);
 
             raylib.DrawText(&count_c_str[0], 200, 10, 20, raylib.GREEN);

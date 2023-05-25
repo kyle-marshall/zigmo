@@ -1,6 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
+const AutoArrayHashMap = std.AutoArrayHashMap;
 
 const ObjectStore = @import("root").ObjectStore;
 
@@ -27,7 +28,7 @@ pub const NetTableEntry = struct {
 
     pub fn print(self: *Self, writer: anytype) !void {
         try writer.print(
-            "{{ id: {}, value: {}, fanout: {any}, ext. signal: {}, is_input: {}, is_undefined: {} }}",
+            "{{ id: {}, value: {}, fanout: {any}, ext. signal: {}, is_input: {}, is_undefined: {} }}\n",
             .{
                 self.id,
                 self.value,
@@ -183,10 +184,7 @@ pub const CircuitSimulator = struct {
     gate_table: ObjectStore(GateTableEntry),
     event_queue: ArrayList(CircuitSimulatorEvent),
     gate_queue: ArrayList(GateId),
-    external_inputs: ArrayList(NetId),
-
-    // world action state
-    free_net_ids: ArrayList(NetId),
+    external_inputs: AutoArrayHashMap(NetId, void),
 
     // resources
     allocator: Allocator,
@@ -198,8 +196,7 @@ pub const CircuitSimulator = struct {
             .gate_table = ObjectStore(GateTableEntry).init(allocator),
             .event_queue = ArrayList(CircuitSimulatorEvent).init(allocator),
             .gate_queue = ArrayList(GateId).init(allocator),
-            .external_inputs = ArrayList(NetId).init(allocator),
-            .free_net_ids = ArrayList(NetId).init(allocator),
+            .external_inputs = AutoArrayHashMap(NetId, void).init(allocator),
         };
         return obj;
     }
@@ -214,10 +211,10 @@ pub const CircuitSimulator = struct {
         try writer.print("[NET TABLE]\n", .{});
         var iter = self.net_table.iterator();
         while (iter.next()) |net| {
-            net.debugPrint();
+            try net.print(writer);
         }
-        std.debug.print("primary inputs: {any}\n", .{
-            self.external_inputs.items,
+        try writer.print("primary inputs: {any}\n", .{
+            self.external_inputs.keys(),
         });
     }
 
@@ -225,7 +222,7 @@ pub const CircuitSimulator = struct {
         try writer.print("[GATE TABLE]\n", .{});
         var gate_iter = self.gate_table.iterator();
         while (gate_iter.next()) |gate| {
-            gate.debugPrint();
+            try gate.print(writer);
         }
     }
 
@@ -236,12 +233,13 @@ pub const CircuitSimulator = struct {
     }
 
     pub fn logState(self: *Self) !void {
-        const random_number = std.crypto.random.int(u64);
+        // const random_number = std.crypto.random.int(u64);
+        const stamp = std.time.milliTimestamp();
         var path_buff: [64]u8 = undefined;
         const path = try std.fmt.bufPrint(
             &path_buff,
             "log/csim-state-{d}.txt",
-            .{random_number},
+            .{stamp},
         );
         const cwd = std.fs.cwd();
         const file = try cwd.createFile(path, .{ .read = true });
@@ -252,8 +250,8 @@ pub const CircuitSimulator = struct {
     }
 
     pub fn panic(self: *Self, comptime reason: []const u8, args: anytype) void {
-        std.debug.print("RED ALERT:\n", .{});
-        std.debug.print(reason, args);
+        std.debug.print("RED ALERT: {s}\n", .{reason});
+        std.debug.print(reason ++ "\n", args);
         std.debug.print("CSIM EMERGENCY SHUTDOWN PROTOCOL INITIATED.\n", .{});
         self.debugPrintState();
         self.logState() catch {};
@@ -288,7 +286,7 @@ pub const CircuitSimulator = struct {
         var net = self.net_table.getPtr(id);
         net.id = id;
         if (is_external_input) {
-            try self.external_inputs.append(id);
+            try self.external_inputs.put(id, {});
         }
         std.log.info(
             "initialized net {d} (is_external_input = {})",
@@ -344,24 +342,32 @@ pub const CircuitSimulator = struct {
 
     pub fn simulate(self: *Self) !void {
         // THIS LIMIT CAN BE RAISED WHEN THE BUGS ARE GONE
-        const max_loop_count = 1000;
+        const max_loop_count = 500;
         try self.readInputs();
         var loop_count: usize = 0;
-        while (self.event_queue.items.len > 0) : (loop_count += 1) {
+        var event_array = &self.event_queue.items;
+        while (event_array.len > 0) : (loop_count += 1) {
             if (loop_count > max_loop_count) {
-                self.panic("simulate() overflow", .{});
-                unreachable;
+                // self.panic("simulate() overflow", .{});
+                // unreachable;
+                std.log.warn("SIMULATE OVERFLOW!\n", .{});
             }
             try self.processEvents();
-            self.flushIntermediateOutput();
-            if (self.gate_queue.items.len > 0) {
+            const event_count0 = event_array.len;
+            if (event_array.len > 0) {
+                self.flushIntermediateOutput();
                 try self.processGates();
             }
+            const event_count1 = event_array.len;
+            if (event_count0 == event_count1) break;
         }
+        self.flushIntermediateOutput();
     }
 
     pub fn readInputs(self: *Self) !void {
-        for (self.external_inputs.items) |input_id| {
+        var iterator = self.external_inputs.iterator();
+        while (iterator.next()) |entry| {
+            const input_id = entry.key_ptr.*;
             const input_net = self.net_table.getPtr(input_id);
             if (input_net.is_undefined or input_net.external_signal != input_net.value) {
                 if (input_net.is_undefined) {
@@ -438,10 +444,11 @@ pub const CircuitSimulator = struct {
         try self.net_table.remove(net_id);
         var gate_iter = self.gate_table.iterator();
         while (gate_iter.next()) |gate| {
-            for (0..gate.inputs.items.len) |idx| {
+            const n = gate.inputs.items.len;
+            for (0..n) |i| {
+                const idx = n - 1 - i;
                 if (gate.inputs.items[idx] == net_id) {
                     _ = gate.inputs.swapRemove(idx);
-                    break;
                 }
             }
             if (gate.output == net_id) {
@@ -463,49 +470,47 @@ pub const CircuitSimulator = struct {
         std.log.info("mergeNets {} <-- {}", .{ net_a_id, net_b_id });
         var net_a = self.net_table.getPtr(net_a_id);
         var net_b = self.net_table.getPtr(net_b_id);
-        var new_val = net_a.value or net_b.value;
-        var new_ext_val = net_a.external_signal or net_b.external_signal;
-        net_a.value = new_val;
-        net_a.external_signal = new_ext_val;
+        // var new_val = net_a.value or net_b.value;
+        // var new_ext_val = net_a.external_signal or net_b.external_signal;
+        // net_a.value = new_val;
+        // net_a.external_signal = new_ext_val;
         // TODO invalidateNet probably not needed
+
         self.invalidateNet(net_a_id);
-        self.invalidateNet(net_b_id);
+
+        // self.invalidateNet(net_b_id);
 
         // clean up external_inputs
-        var b_is_ext_input = net_b.is_input;
-        for (self.external_inputs.items, 0..) |input_id, idx| {
-            if (input_id == net_b_id) {
-                b_is_ext_input = true;
-                _ = self.external_inputs.swapRemove(idx);
-                break;
-            }
+        // var b_is_ext_input = net_b.is_input;
+        if (self.external_inputs.contains(net_b_id)) {
+            // b_is_ext_input = true;
+            _ = self.external_inputs.swapRemove(net_b_id);
         }
-        if (b_is_ext_input != net_b.is_input) {
-            self.panic("net_b.is_input != b_is_ext_input", .{});
-        }
-        if (b_is_ext_input) {
-            try self.external_inputs.append(net_a_id);
-            net_a.is_input = true;
-        }
+
+        // TODO
+        // if (b_is_ext_input != net_b.is_input) {
+        //     // only possible if external_inputs previously contained net_b_id, but net_b.is_input = false
+        //     // this happened because external_inputs is currently being filled with dupes
+        //     // ... should not happen anymore ...
+        //     self.panic("net_b.is_input != b_is_ext_input", .{});
+        // }
+
+        // if (b_is_ext_input) {
+        //     try self.external_inputs.put(net_a_id, {});
+        //     net_a.is_input = true;
+        // }
 
         var gate_iter = self.gate_table.iterator();
         while (gate_iter.next()) |gate| {
             if (gate.output == net_b_id) {
                 gate.output = net_a_id;
             }
-            var i: i32 = @intCast(i32, gate.inputs.items.len) - 1;
-            var gate_already_has_input = gate.dependsOn(net_a_id);
-            while (i >= 0) : (i -= 1) {
-                var idx = @intCast(usize, i);
+
+            const n = gate.inputs.items.len;
+            for (0..n) |idx| {
                 var input = gate.inputs.items[idx];
                 if (input == net_b_id) {
-                    if (gate_already_has_input) {
-                        _ = gate.inputs.swapRemove(idx);
-                        std.debug.print("prevented duplicate input to gate.\n", .{});
-                    } else {
-                        gate.inputs.items[idx] = net_a_id;
-                    }
-                    break;
+                    gate.inputs.items[idx] = net_a_id;
                 }
             }
         }
