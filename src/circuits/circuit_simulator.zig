@@ -347,6 +347,9 @@ pub const CircuitSimulator = struct {
         var loop_count: usize = 0;
         var event_array = &self.event_queue.items;
         while (event_array.len > 0) : (loop_count += 1) {
+            // In most cases the safest procedure is to detect the oscillation
+            // immediately before calling the Event Processor, and setting the values of all nets in the
+            // event queue to the unknown value.
             if (loop_count > max_loop_count) {
                 // self.panic("simulate() overflow", .{});
                 // unreachable;

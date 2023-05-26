@@ -25,6 +25,15 @@ pub fn build(b: *std.Build) void {
     });
     // exe.linkSystemLibrary("c");
     exe.linkLibC();
+    exe.addIncludePath("lib/perlin-noise/src");
+    const c_source = [_][]const u8{
+        "lib/perlin-noise/src/simplexnoise1234.c",
+    };
+    const c_source_flags = [_][]const u8{};
+    exe.addCSourceFiles(
+        &c_source,
+        &c_source_flags,
+    );
     exe.linkSystemLibrary("raylib");
 
     // This declares intent for the executable to be installed into the

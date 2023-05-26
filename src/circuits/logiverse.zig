@@ -18,6 +18,9 @@ const Vec2 = math.Vec2;
 const Mat3 = math.Mat3;
 const Rect = math.geo.Rect;
 const ObjectStore = root.ObjectStore;
+const Cam2 = root.cam.Cam2;
+const Cam2Controller = root.cam.Cam2Controller;
+const gfx = root.gfx;
 
 const circuit_simulator = @import("circuit_simulator.zig");
 const CircuitSimulator = circuit_simulator.CircuitSimulator;
@@ -53,12 +56,8 @@ const geo = @import("root").geo;
 const RadiusQueryResultItem = geo.RadiusQueryResultItem;
 const PointData = geo.PointData;
 
-const Cam2 = @import("root").cam.Cam2;
-
-const gfx = @import("root").gfx;
-
-const BW_WIDTH = 1000;
-const BW_HEIGHT = 1000;
+const BW_WIDTH = 1024;
+const BW_HEIGHT = 1024;
 const BW_ORIGIN_X = BW_WIDTH / 2;
 const BW_ORIGIN_Y = BW_HEIGHT / 2;
 const BW_MAX_OBJECTS = 1_000_000;
@@ -66,9 +65,6 @@ const BW_MAX_INITIAL_SPEED = 50.0; // world units per second
 const BW_INSTA_SPAWN_BATCH_SIZE = 10;
 
 const VOID_COLOR = Color{ .r = 20, .g = 49, .b = 65, .a = 255 };
-const GRID_BG_COLOR = Color{ .r = 65, .g = 94, .b = 120, .a = 255 };
-const MINOR_GRID_LINE_COLOR = Color{ .r = 63, .g = 108, .b = 155, .a = 255 };
-const MAJOR_GRID_LINE_COLOR = Color{ .r = 90, .g = 135, .b = 169, .a = 255 };
 
 const ResourceManager = struct {
     const Self = @This();
@@ -156,8 +152,6 @@ pub const Logiverse = struct {
     screen_size: Vec2(f32),
     cam: Cam2(f32),
     mouse_pos: Vec2(f32),
-    pan_start: Vec2(f32),
-    is_panning: bool,
 
     hover_handle_id: ?usize,
     hover_pos: Vec2(f32),
@@ -189,9 +183,7 @@ pub const Logiverse = struct {
             ),
             .resource_manager = ResourceManager.init(allocator),
             .obj_mgr = try ObjectManager.init(allocator),
-            .pan_start = Vec2(f32).zero,
             .mouse_pos = Vec2(f32).zero,
-            .is_panning = false,
             .is_wiring = false,
             .wire_start_pin = 0,
             .net_color = ArrayList(Color).init(allocator),
@@ -327,53 +319,6 @@ pub const Logiverse = struct {
         return false;
     }
 
-    /// when pin is rewired we need to update the csim
-    /// to link it with it's gates
-    pub fn onPinRewired(self: *Self, pin_hdl: *ObjectHandle) !void {
-        var pin = &pin_hdl.getObject().pin;
-        std.debug.print("onPinRewired: pin {}/{}\n", .{ pin_hdl.id, pin_hdl.obj_id });
-        var net = self.csim.net_table.getPtr(pin.csim_net_id);
-        if (pin.is_gate_input) {
-            // ensure net fanout includes gate id
-            for (net.fanout.items) |gate_id| {
-                if (gate_id == pin.csim_gate_id) {
-                    std.debug.print(
-                        "onPinRewired: net {} fanout already includes gate {}\n",
-                        .{ pin.csim_net_id, pin.csim_gate_id },
-                    );
-                    return;
-                }
-            }
-            try net.fanout.append(pin.csim_gate_id);
-            std.debug.print(
-                "onPinRewired: net {} fanout updated to {any}\n",
-                .{ pin.csim_net_id, net.fanout.items },
-            );
-        } else if (pin.is_gate_output) {
-            var gate = self.csim.gate_table.getPtr(pin.csim_gate_id);
-            // ensure gate output is set to net id
-            if (gate.output == pin.csim_net_id) {
-                std.debug.print(
-                    "onPinRewired: gate {} output already set to {}\n",
-                    .{ pin.csim_gate_id, pin.csim_net_id },
-                );
-                std.debug.print("{*}\n", .{gate});
-                gate.debugPrint();
-                return;
-            }
-            gate.output = pin.csim_net_id;
-            std.debug.print(
-                "onPinRewired: gate {} output set to {}\n",
-                .{ pin.csim_gate_id, pin.csim_net_id },
-            );
-        } else {
-            std.debug.print(
-                "onPinRewired: pin {} is not gate input or output\n",
-                .{pin_hdl.id},
-            );
-        }
-    }
-
     pub fn wirePins(self: *Self, p0: usize, p1: usize) !void {
         if (p0 == p1) {
             std.log.info("those are the same pins, you fool!", .{});
@@ -384,8 +329,8 @@ pub const Logiverse = struct {
             std.log.info("pins are already wired. abort!", .{});
             return;
         }
-        var pin0_hdl = self.obj_mgr.getHandleByObjectId(.pin, p0);
-        var pin1_hdl = self.obj_mgr.getHandleByObjectId(.pin, p1);
+        // var pin0_hdl = self.obj_mgr.getHandleByObjectId(.pin, p0);
+        // var pin1_hdl = self.obj_mgr.getHandleByObjectId(.pin, p1);
 
         // TODO rewrite everything to use handles/handle_ids
 
@@ -432,8 +377,8 @@ pub const Logiverse = struct {
         // trigger re-simulation
         if (net.is_input) net.is_undefined = true;
 
-        try self.onPinRewired(pin0_hdl);
-        try self.onPinRewired(pin1_hdl);
+        // try self.onPinRewired(pin0_hdl);
+        // try self.onPinRewired(pin1_hdl);
 
         // self.csim.printNetTable();
         // self.csim.printGateTable();
@@ -492,6 +437,7 @@ pub const Logiverse = struct {
     }
 
     pub fn _mouseButtonDown(self: *Self, button: MouseButton, screen_pos: Vec2(f32)) !void {
+        _ = screen_pos;
         if (button == .left) {
             if (self.hover_handle_id == null and self.bounds.containsPoint(self.hover_pos)) {
                 // _ = try self.spawnPin(self.hover_pos, false);
@@ -536,10 +482,6 @@ pub const Logiverse = struct {
             const handle = self.obj_mgr.getHandle(self.hover_handle_id.?);
             try self.removeObject(handle.id);
             try self.updateHoverObj();
-        } else {
-            self.pan_start = screen_pos;
-            self.is_panning = true;
-            std.log.info("pan start", .{});
         }
     }
 
@@ -558,9 +500,6 @@ pub const Logiverse = struct {
             }
         } else if (button == .right) {
             std.log.info("right mouse up - noop", .{});
-        } else {
-            self.is_panning = false;
-            std.log.info("pan end", .{});
         }
 
         if (self.hover_handle_id == null) {
@@ -574,12 +513,6 @@ pub const Logiverse = struct {
     pub fn _mouseMove(self: *Self, screen_pos: Vec2(f32)) !void {
         self.mouse_pos = screen_pos;
         // std.log.info("mouse move: ({d}, {d})", .{ screen_pos.v[0], screen_pos.v[1] });
-        if (self.is_panning) {
-            const delta = screen_pos.sub(self.pan_start);
-            self.cam.applyTransform(Mat3(f32).txTranslate(delta.v[0], delta.v[1]));
-            self.pan_start = screen_pos;
-            return;
-        }
         // update hover_obj
         try self.updateHoverObj();
     }
@@ -646,10 +579,6 @@ pub fn initiateCircuitSandbox() !void {
         @intToFloat(f32, screen_height),
     );
 
-    const grid_div = 100;
-    var pan_speed: f32 = 10;
-    var zoom_speed: f32 = 1.1;
-
     raylib.InitWindow(screen_width, screen_height, "transform_test");
     raylib.SetWindowPosition(1920, 64);
     defer raylib.CloseWindow();
@@ -663,7 +592,14 @@ pub fn initiateCircuitSandbox() !void {
     try world.load_textures();
     // try world.init_test_pins();
 
+    const chunk_size = Vec2(f32).fill(100);
+    const draw_grid_options = gfx.grid.DrawGridOptions{
+        .chunk_size = chunk_size,
+        .world_bounds = world.bounds,
+    };
+
     var cam = &(world.cam);
+    var camCtrl = Cam2Controller(f32).init(cam);
     cam.centerOnInstant(Vec2(f32).init(200, 150));
 
     raylib.SetTargetFPS(60);
@@ -677,6 +613,9 @@ pub fn initiateCircuitSandbox() !void {
 
     while (!raylib.WindowShouldClose()) {
         const frame_time = raylib.GetFrameTime();
+
+        camCtrl.update(frame_time);
+
         const is_left_mouse_down = raylib.IsMouseButtonDown(raylib.MOUSE_BUTTON_LEFT);
         const is_right_mouse_down = raylib.IsMouseButtonDown(raylib.MOUSE_BUTTON_RIGHT);
         const is_middle_mouse_down = raylib.IsMouseButtonDown(raylib.MOUSE_BUTTON_MIDDLE);
@@ -704,32 +643,6 @@ pub fn initiateCircuitSandbox() !void {
         prev_is_middle_mouse_down = is_middle_mouse_down;
         prev_mouse_pos = mouse_pos;
 
-        if (raylib.IsKeyDown(raylib.KEY_RIGHT)) {
-            const tx = Mat3(f32).txTranslate(-pan_speed, 0);
-            cam.applyTransform(tx);
-        }
-        if (raylib.IsKeyDown(raylib.KEY_LEFT)) {
-            const tx = Mat3(f32).txTranslate(pan_speed, 0);
-            cam.applyTransform(tx);
-        }
-        if (raylib.IsKeyDown(raylib.KEY_UP)) {
-            const tx = Mat3(f32).txTranslate(0, pan_speed);
-            cam.applyTransform(tx);
-        }
-        if (raylib.IsKeyDown(raylib.KEY_DOWN)) {
-            const tx = Mat3(f32).txTranslate(0, -pan_speed);
-            cam.applyTransform(tx);
-        }
-        const wheel_move = raylib.GetMouseWheelMove();
-        if (wheel_move > 0) {
-            const tx = Mat3(f32).txScale(zoom_speed, zoom_speed);
-            cam.applyTransform(tx);
-        } else if (wheel_move < 0) {
-            const s = 1.0 / zoom_speed;
-            const tx = Mat3(f32).txScale(s, s);
-            cam.applyTransform(tx);
-        }
-
         // Update circuit simulation
         {
             const t0 = std.time.milliTimestamp();
@@ -750,35 +663,7 @@ pub fn initiateCircuitSandbox() !void {
 
             // GRID LINES
             if (draw_grid_lines) {
-                var grid_size = world.bounds.size.div(Vec2(f32).init(grid_div, grid_div));
-                const screen_rect = world.cam.worldToScreenRect(world.bounds);
-                raylib.DrawRectangleV(
-                    screen_rect.origin.toRaylibVector2(),
-                    screen_rect.size.toRaylibVector2(),
-                    GRID_BG_COLOR,
-                );
-                var world_x: f32 = 0;
-                var c: u32 = 0;
-                while (world_x <= world.bounds.size.v[0]) : ({
-                    world_x += grid_size.v[0];
-                    c += 1;
-                }) {
-                    const s0 = cam.worldToScreen(Vec2(f32).init(world_x, 0)).floatToInt(i32);
-                    const s1 = cam.worldToScreen(Vec2(f32).init(world_x, world.bounds.size.v[1])).floatToInt(i32);
-                    const color = if (c % 10 == 0) MAJOR_GRID_LINE_COLOR else MINOR_GRID_LINE_COLOR;
-                    raylib.DrawLine(s0.v[0], s0.v[1], s1.v[0], s1.v[1], color);
-                }
-                var world_y: f32 = 0;
-                c = 0;
-                while (world_y <= world.bounds.size.v[1]) : ({
-                    world_y += grid_size.v[1];
-                    c += 1;
-                }) {
-                    const s0 = cam.worldToScreen(Vec2(f32).init(0, world_y)).floatToInt(i32);
-                    const s1 = cam.worldToScreen(Vec2(f32).init(world.bounds.size.v[0], world_y)).floatToInt(i32);
-                    const color = if (c % 10 == 0) MAJOR_GRID_LINE_COLOR else MINOR_GRID_LINE_COLOR;
-                    raylib.DrawLine(s0.v[0], s0.v[1], s1.v[0], s1.v[1], color);
-                }
+                gfx.grid.drawGrid(&world.cam, draw_grid_options);
             }
 
             try world._draw(frame_time);

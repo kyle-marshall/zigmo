@@ -90,12 +90,6 @@ fn update(handle: *ObjectHandle, frame_time: f32) !void {
         if (csim.net_table.free_ids.contains(pin.csim_net_id)) {
             pin.csim_net_id = 0;
             pin.is_connected = false;
-        } else {
-            var curr_net = csim.net_table.getPtr(pin.csim_net_id);
-            // presumably the net exists still -- maybe we need to sync
-            if (pin.is_primary and !curr_net.is_input) {
-                curr_net.is_input = true;
-            }
         }
     }
 
@@ -103,15 +97,25 @@ fn update(handle: *ObjectHandle, frame_time: f32) !void {
         const net_id = try handle.world.csim.addNet(pin.is_primary);
         pin.csim_net_id = net_id;
         pin.is_connected = true;
-        if (pin.is_gate_input) {
-            var gate = handle.world.csim.gate_table.getPtr(pin.csim_gate_id);
-            // if gate already depends on net, something didn't get cleaned up properly
-            std.debug.assert(!gate.dependsOn(net_id));
-            try gate.inputs.append(net_id);
-        } else if (pin.is_gate_output) {
-            var gate = handle.world.csim.gate_table.getPtr(pin.csim_gate_id);
-            gate.output = net_id;
+    }
+
+    var net = csim.net_table.getPtr(pin.csim_net_id);
+
+    // check if we need to update whether net is an input
+    if (pin.is_primary and !net.is_input) {
+        net.is_input = true;
+    }
+
+    // check if we need to update gate inputs/output
+    if (pin.is_gate_input) {
+        var gate = handle.world.csim.gate_table.getPtr(pin.csim_gate_id);
+        // if gate already depends on net, something didn't get cleaned up properly
+        if (!gate.dependsOn(pin.csim_net_id)) {
+            try gate.inputs.append(pin.csim_net_id);
         }
+    } else if (pin.is_gate_output) {
+        var gate = handle.world.csim.gate_table.getPtr(pin.csim_gate_id);
+        gate.output = pin.csim_net_id;
     }
 }
 

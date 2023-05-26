@@ -136,3 +136,52 @@ fn delete(handle: *ObjectHandle) !void {
 
     std.debug.print("found {} wires in net {}\n", .{ c, exiled_net_id });
 }
+
+// THIS IS WHERE TO START 2MORROW--
+// MOVE NECESSARY LOGIC TO Pin
+// /// when pin is rewired we need to update the csim
+// /// to link it with it's gates
+// pub fn onPinRewired(self: *Self, pin_hdl: *ObjectHandle) !void {
+//     var pin = &pin_hdl.getObject().pin;
+//     std.debug.print("onPinRewired: pin {}/{}\n", .{ pin_hdl.id, pin_hdl.obj_id });
+//     var net = self.csim.net_table.getPtr(pin.csim_net_id);
+//     if (pin.is_gate_input) {
+//         // ensure net fanout includes gate id
+//         for (net.fanout.items) |gate_id| {
+//             if (gate_id == pin.csim_gate_id) {
+//                 std.debug.print(
+//                     "onPinRewired: net {} fanout already includes gate {}\n",
+//                     .{ pin.csim_net_id, pin.csim_gate_id },
+//                 );
+//                 return;
+//             }
+//         }
+//         try net.fanout.append(pin.csim_gate_id);
+//         std.debug.print(
+//             "onPinRewired: net {} fanout updated to {any}\n",
+//             .{ pin.csim_net_id, net.fanout.items },
+//         );
+//     } else if (pin.is_gate_output) {
+//         var gate = self.csim.gate_table.getPtr(pin.csim_gate_id);
+//         // ensure gate output is set to net id
+//         if (gate.output == pin.csim_net_id) {
+//             std.debug.print(
+//                 "onPinRewired: gate {} output already set to {}\n",
+//                 .{ pin.csim_gate_id, pin.csim_net_id },
+//             );
+//             std.debug.print("{*}\n", .{gate});
+//             gate.debugPrint();
+//             return;
+//         }
+//         gate.output = pin.csim_net_id;
+//         std.debug.print(
+//             "onPinRewired: gate {} output set to {}\n",
+//             .{ pin.csim_gate_id, pin.csim_net_id },
+//         );
+//     } else {
+//         std.debug.print(
+//             "onPinRewired: pin {} is not gate input or output\n",
+//             .{pin_hdl.id},
+//         );
+//     }
+// }

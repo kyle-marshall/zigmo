@@ -4,11 +4,15 @@ const Allocator = std.mem.Allocator;
 
 pub const raylib = @cImport(@cInclude("raylib.h"));
 pub const rlgl = @cImport(@cInclude("rlgl.h"));
+pub const simplex = @cImport(@cInclude("simplexnoise1234.h"));
 
 pub const math = @import("math/math.zig");
 const Vec2 = math.Vec2;
 const Rect = math.geo.Rect;
 const Mat3 = math.Mat3;
+
+pub const noise = @import("math/noise.zig");
+pub const noisefun = @import("noisefun.zig");
 
 pub const geo = @import("math/geo/geo.zig");
 pub const gfx = @import("gfx.zig");
@@ -60,6 +64,7 @@ pub fn main() !void {
     // try circuitTest();
     // try bunnyTest();
     // try geo.doRadiusQueryBenchmark();
+    // try noisefun.enjoyTheNoise();
 }
 
 test "simple test" {

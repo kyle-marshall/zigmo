@@ -1,7 +1,11 @@
 const std = @import("std");
 const RaylibVector2 = @import("root").raylib.Vector2;
 
-fn VecFunctions(comptime VecT: type, comptime N: usize, comptime NumT: type) type {
+fn VecFunctions(
+    comptime VecT: type,
+    comptime N: usize,
+    comptime NumT: type,
+) type {
     return struct {
         pub inline fn fromVector(vector: @Vector(N, NumT)) VecT {
             return VecT{ .v = vector };
@@ -72,6 +76,10 @@ fn VecFunctions(comptime VecT: type, comptime N: usize, comptime NumT: type) typ
             return @reduce(.Add, a.v * b.v);
         }
 
+        pub inline fn sum(self: *VecT) NumT {
+            return @reduce(.Add, self.v);
+        }
+
         pub inline fn floor(self: VecT) VecT {
             return VecT{ .v = @floor(self.v) };
         }
@@ -139,7 +147,11 @@ pub fn Vec2(comptime T: type) type {
             return @max(self.v[0], self.v[1]);
         }
 
-        pub inline fn map(self: Self, comptime TP: type, tx: fn (value: T, index: usize) TP) Vec2(TP) {
+        pub inline fn map(
+            self: Self,
+            comptime TP: type,
+            tx: fn (value: T, index: usize) TP,
+        ) Vec2(TP) {
             return Vec2(TP).init(tx(self.v[0], 0), tx(self.v[1], 1));
         }
 

@@ -7,6 +7,8 @@ const Color = raylib.Color;
 const math = @import("root").math;
 const Vec2 = math.Vec2;
 
+pub const grid = @import("gfx/grid.zig");
+
 pub fn drawTexturePoly(texture: raylib.Texture2D, center: Vec2(f32), points: []Vec2(f32), texcoords: []Vec2(f32), tint: Color) void {
     rlgl.rlSetTexture(texture.id);
     rlgl.rlBegin(rlgl.RL_QUADS);
