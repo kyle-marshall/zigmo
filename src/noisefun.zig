@@ -28,6 +28,41 @@ pub fn colorFromFloatValues(r: f32, g: f32, b: f32, a: f32) Color {
     };
 }
 
+fn randomVec2f32(rng: anytype) Vec2(f32) {
+    return Vec2(f32).init(rng.float(f32), rng.float(f32));
+}
+
+const NoiseyHyperParams = struct {
+    const Self = @This();
+    r_plane_offset: Vec2(f32),
+    g_plane_offset: Vec2(f32),
+    b_plane_offset: Vec2(f32),
+    r_div: Vec2(f32),
+    g_div: Vec2(f32),
+    b_div: Vec2(f32),
+
+    pub fn random(rng: anytype) Self {
+        const max_plane_offset = 1000;
+        const r_plane_offset = Vec2(f32).init(rng.float(f32) * max_plane_offset, rng.float(f32) * max_plane_offset);
+        const g_plane_offset = Vec2(f32).init(rng.float(f32) * max_plane_offset, rng.float(f32) * max_plane_offset);
+        const b_plane_offset = Vec2(f32).init(rng.float(f32) * max_plane_offset, rng.float(f32) * max_plane_offset);
+
+        const fun_div_max = 500;
+        const r_div = randomVec2f32(rng).mulScalar(fun_div_max);
+        const g_div = randomVec2f32(rng).mulScalar(fun_div_max);
+        const b_div = randomVec2f32(rng).mulScalar(fun_div_max);
+
+        return Self{
+            .r_plane_offset = r_plane_offset,
+            .g_plane_offset = g_plane_offset,
+            .b_plane_offset = b_plane_offset,
+            .r_div = r_div,
+            .g_div = g_div,
+            .b_div = b_div,
+        };
+    }
+};
+
 pub fn enjoyTheNoise() !void {
     // const allocator = std.heap.c_allocator;
     const screen_width = 800;
@@ -62,26 +97,15 @@ pub fn enjoyTheNoise() !void {
 
     var camCtrl = Cam2Controller(f32).init(&cam);
 
-    var r_plane_offset = Vec2(f32).init(0, 0);
-    var g_plane_offset = Vec2(f32).init(rng.float(f32), 0);
-    var b_plane_offset = Vec2(f32).init(0, rng.float(f32));
-
-    const fun_div_max = 500;
-    const r_div_x = rng.float(f32) * fun_div_max;
-    const r_div_y = rng.float(f32) * fun_div_max;
-    const g_div_x = rng.float(f32) * fun_div_max;
-    const g_div_y = rng.float(f32) * fun_div_max;
-    const b_div_x = rng.float(f32) * fun_div_max;
-    const b_div_y = rng.float(f32) * fun_div_max;
+    var hyper_params = NoiseyHyperParams.random(rng);
 
     raylib.InitWindow(screen_width, screen_height, "noisefun");
     defer raylib.CloseWindow();
     raylib.SetWindowPosition(1920, 64);
     raylib.SetTargetFPS(60);
 
-    var cell_tex = raylib.LoadTexture(CELL_TEX_PATH);
+    const cell_tex = raylib.LoadTexture(CELL_TEX_PATH);
 
-    const radius = SCREEN_GRID_UNIT / 2;
     var t: f32 = 0;
     while (!raylib.WindowShouldClose()) {
         const frame_time = raylib.GetFrameTime();
@@ -90,38 +114,51 @@ pub fn enjoyTheNoise() !void {
         raylib.ClearBackground(VOID_COLOR);
         gfx.grid.drawGrid(&cam, draw_grid_options);
 
-        const visible_rect = cam.visible_rect;
-
-        var scaled_rad = radius * cam.curr_scale;
-        var screen_points: [5]Vec2(f32) = undefined;
-        inline for (0..5) |c_i| {
-            screen_points[c_i] = root.gfx.RectTexCoords[c_i].subScalar(0.5).mulScalar(scaled_rad * 2);
+        if (raylib.IsKeyPressed(raylib.KEY_Z)) {
+            hyper_params = NoiseyHyperParams.random(rng);
         }
 
-        const wx_start = @floor(visible_rect.origin.v[0] / SCREEN_GRID_UNIT) * SCREEN_GRID_UNIT;
-        const wy_start = @floor(visible_rect.origin.v[1] / SCREEN_GRID_UNIT) * SCREEN_GRID_UNIT;
+        const visible_rect = cam.visible_rect;
+
+        const min_vox_render_size = 5;
+        var wdx: f32 = SCREEN_GRID_UNIT;
+        var wdy: f32 = SCREEN_GRID_UNIT;
+        var vox_x_step = Vec2(f32).init(wdx * cam.curr_scale, 0);
+        var vox_y_step = Vec2(f32).init(0, wdy * cam.curr_scale);
+        while (vox_x_step.v[0] < min_vox_render_size) {
+            wdx += SCREEN_GRID_UNIT;
+            vox_x_step = Vec2(f32).init(wdx * cam.curr_scale, 0);
+        }
+        while (vox_y_step.v[1] < min_vox_render_size) {
+            wdy += SCREEN_GRID_UNIT;
+            vox_y_step = Vec2(f32).init(0, wdy * cam.curr_scale);
+        }
+
+        const screen_cell_size = Vec2(f32).init(wdx * cam.curr_scale, wdy * cam.curr_scale);
+        var screen_points: [5]Vec2(f32) = undefined;
+        inline for (0..5) |c_i| {
+            screen_points[c_i] = root.gfx.RectTexCoords[c_i].subScalar(0.5).mul(screen_cell_size);
+        }
+
+        const wx_start = @floor(visible_rect.origin.v[0] / wdx) * wdx;
+        const wy_start = @floor(visible_rect.origin.v[1] / wdy) * wdy;
         var screen_start = cam.worldToScreen(Vec2(f32).init(wx_start, wy_start));
-        var vox_x_step = Vec2(f32).init(SCREEN_GRID_UNIT * cam.curr_scale, 0);
-        var vox_y_step = Vec2(f32).init(0, SCREEN_GRID_UNIT * cam.curr_scale);
         var screen_pos = Vec2(f32).init(screen_start.v[0], 0);
         var wx: f32 = wx_start;
         var wy: f32 = undefined;
-        while (screen_pos.v[0] < screen_width) : (wx += SCREEN_GRID_UNIT) {
+        const t_vec = Vec2(f32).fill(t).mulScalar(50);
+
+        while (screen_pos.v[0] < screen_width + vox_x_step.v[0]) : (wx += wdx) {
             wy = wy_start;
             screen_pos.v[1] = screen_start.v[1];
-            while (screen_pos.v[1] < screen_height) : (wy += SCREEN_GRID_UNIT) {
-                const s_r = (1.0 + noise.snoise2(
-                    (t + wx + r_plane_offset.v[0]) / r_div_x,
-                    (t + wy + r_plane_offset.v[1]) / r_div_y,
-                )) / 2.0;
-                const s_g = (1.0 + noise.snoise2(
-                    (t + wx + g_plane_offset.v[0]) / g_div_x,
-                    (t + wy + g_plane_offset.v[1]) / g_div_y,
-                )) / 2.0;
-                const s_b = (1.0 + noise.snoise2(
-                    (t + wx + b_plane_offset.v[0]) / b_div_x,
-                    (t + wy + b_plane_offset.v[1]) / b_div_y,
-                )) / 2.0;
+            while (screen_pos.v[1] < screen_height + vox_y_step.v[1]) : (wy += wdy) {
+                const w_pos = Vec2(f32).init(wx, wy);
+                const r_pos = t_vec.add(w_pos).add(hyper_params.r_plane_offset).div(hyper_params.r_div);
+                const g_pos = t_vec.add(w_pos).add(hyper_params.g_plane_offset).div(hyper_params.g_div);
+                const b_pos = t_vec.add(w_pos).add(hyper_params.b_plane_offset).div(hyper_params.b_div);
+                const s_r = (1.0 + noise.snoise2v(r_pos)) / 2.0;
+                const s_g = (1.0 + noise.snoise2v(g_pos)) / 2.0;
+                const s_b = (1.0 + noise.snoise2v(b_pos)) / 2.0;
                 const color = colorFromFloatValues(s_r, s_g, s_b, 1.0);
                 // raylib.DrawCircleV(screen_pos.toRaylibVector2(), scaled_rad, color);
                 root.gfx.drawTexturePoly(
@@ -135,8 +172,9 @@ pub fn enjoyTheNoise() !void {
             }
             _ = screen_pos.addInPlace(vox_x_step);
         }
-        t += frame_time * 10;
-
+        t += frame_time;
+        raylib.DrawFPS(10, 10);
+        raylib.DrawText("Press Z to randomize", 100, 10, 20, raylib.PINK);
         raylib.EndDrawing();
     }
 }

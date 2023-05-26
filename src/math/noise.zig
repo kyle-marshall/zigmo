@@ -1,6 +1,6 @@
 const std = @import("std");
 const math = @import("math.zig");
-const Vec2 = math.Vec2(f32);
+const Vec2 = math.Vec2;
 
 // The following is a port of Stefan Gustavson's SimplexNoise implementation.
 // some comments are copied from the original
@@ -52,6 +52,10 @@ fn grad2(hash: i32, x: f32, y: f32) f32 {
     const a = if ((h & 1) > 0) -u else u;
     const b = if ((h & 2) > 0) -v else v;
     return a + 2.0 * b;
+}
+
+pub inline fn snoise2v(p: Vec2(f32)) f32 {
+    return snoise2(p.v[0], p.v[1]);
 }
 
 pub fn snoise2(x: f32, y: f32) f32 {
