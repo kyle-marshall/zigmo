@@ -60,11 +60,39 @@ pub fn main() !void {
     std.debug.print("It's a busy day ahead!\n", .{});
     // try doInterfaceTests();
     // try shellTest();
-    try initiateCircuitSandbox();
+    // try initiateCircuitSandbox();
     // try circuitTest();
     // try bunnyTest();
     // try geo.doRadiusQueryBenchmark();
-    // try noisefun.enjoyTheNoise();
+    try noisefun.enjoyTheNoise();
+
+    // var seed = std.crypto.random.int(u64);
+    // var prng = std.rand.DefaultPrng.init(seed);
+    // var rng = prng.random();
+
+    // var min_val: f32 = std.math.f32_max;
+    // var max_val: f32 = std.math.f32_min;
+    // const test_count = 1_000_000;
+    // for (0..test_count) |_| {
+    //     const x = rng.float(f32) * 1_000;
+    //     const y = rng.float(f32) * 1_000;
+    //     const v = noise.snoise2(x, y);
+    //     min_val = std.math.min(min_val, v);
+    //     max_val = std.math.max(max_val, v);
+    // }
+    // std.debug.print("min: {d}, max: {d}\n", .{ min_val, max_val });
+
+    // var x: f32 = 0;
+    // var y: f32 = 0;
+    // while (x < 100) : (x += 1.0) {
+    //     y = 0;
+    //     while (y < 100) : (y += 1.0) {
+    //         var v = noise.snoise2(x, y);
+    //         var v2 = simplex.snoise2(x, y);
+    //         std.debug.print("{d},{d}: {d}\n", .{ x, y, v });
+    //         std.debug.print("{d},{d}: {d}\n", .{ x, y, v2 });
+    //     }
+    // }
 }
 
 test "simple test" {

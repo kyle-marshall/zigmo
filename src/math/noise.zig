@@ -86,8 +86,8 @@ pub fn snoise2(x: f32, y: f32) f32 {
     const x2 = x0p - 1.0 + 2.0 * G2;
     const y2 = y0p - 1.0 + 2.0 * G2;
 
-    const i_byte = @intCast(u8, (@floatToInt(i32, i) & 255));
-    const j_byte = @intCast(u8, (@floatToInt(i32, j) & 255));
+    const i_byte = @intCast(u16, (@floatToInt(i32, i) & 255));
+    const j_byte = @intCast(u16, (@floatToInt(i32, j) & 255));
 
     // Calculate the contribution from the three corners
     var t0 = 0.5 - x0p * x0p - y0p * y0p;
@@ -129,5 +129,5 @@ pub fn snoise2(x: f32, y: f32) f32 {
     // The result is scaled to return values in the interval [-1,1].
 
     // WARNING! MAGIC NUMBERS:
-    return -0.00905 + 48.42 * (n0 + n1 + n2);
+    return 45.23 * (n0 + n1 + n2);
 }

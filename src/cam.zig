@@ -44,6 +44,12 @@ pub fn Cam2(comptime T: type) type {
             return Rect(T).init(top_left, size);
         }
 
+        pub fn screenToWorldRect(self: Self, screen_rect: Rect(T)) Rect(T) {
+            const top_left = self.screenToWorld(screen_rect.origin);
+            const size = screen_rect.size.divScalar(self.curr_scale);
+            return Rect(T).init(top_left, size);
+        }
+
         pub fn applyTransformBase(self: *Self, transform: Mat3(T)) void {
             self.transform = self.transform.leftMul(transform);
             self.inverse_transform = self.transform.inverse();
